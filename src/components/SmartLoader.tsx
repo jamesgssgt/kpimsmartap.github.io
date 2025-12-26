@@ -6,7 +6,7 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
 export default function SmartLoader({ children }: { children: React.ReactNode }) {
-    // const [client, setClient] = useState<Client | null>(null);
+
     const [error, setError] = useState<Error | null>(null);
     const [isSupabaseAuthenticated, setIsSupabaseAuthenticated] = useState(false);
     const router = useRouter();
