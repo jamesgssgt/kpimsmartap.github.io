@@ -160,7 +160,10 @@ export default async function DashboardPage(props: {
                 <div className="space-y-8">
                     {/* TOP: KPI Table (Latest Day Metric) */}
                     <div className="space-y-4">
-                        <KPITable items={latestMetrics} />
+                        <KPITable
+                            items={latestMetrics}
+                            title={`[指標儀表板] 最近一日指標監控 (${latestFilteredDateStr || "無資料"})`}
+                        />
                     </div>
 
                     {/* MIDDLE: Charts Section */}

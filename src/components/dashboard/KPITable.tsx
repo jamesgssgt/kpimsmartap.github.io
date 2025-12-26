@@ -14,9 +14,10 @@ import { useRouter, useSearchParams, usePathname } from "next/navigation";
 
 interface KPITableProps {
     items: KPIDetail[];
+    title?: string;
 }
 
-export function KPITable({ items }: KPITableProps) {
+export function KPITable({ items, title }: KPITableProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -29,7 +30,7 @@ export function KPITable({ items }: KPITableProps) {
     return (
         <Card className="w-full">
             <CardHeader>
-                <CardTitle className="text-lg">[指標儀表板] 最近一日指標監控</CardTitle>
+                <CardTitle className="text-lg">{title || "[指標儀表板] 最近一日指標監控"}</CardTitle>
             </CardHeader>
             <CardContent>
                 <Table>

@@ -161,8 +161,8 @@ export async function generateData() {
                     const docId = randomChoice(dept.doctors);
                     const docName = dept.doc_names[docId];
 
-                    // Dates
-                    const now = new Date();
+                    // Dates - Fixed Anchor to 2025-11-20
+                    const now = new Date("2025-11-20T23:59:59");
                     const opStart = new Date(now.getTime() - dayIndex * 24 * 60 * 60 * 1000);
                     opStart.setHours(randomInt(8, 16));
                     const opEnd = new Date(opStart.getTime() + randomInt(60, 240) * 60 * 1000);
@@ -189,7 +189,8 @@ export async function generateData() {
                     const patId = getLongId();
                     const gender = randomChoice(["male", "female"]);
                     const age = randomInt(20, 90);
-                    const birthDate = new Date();
+                    // Use 'now' (simulation anchor) for birth calculation
+                    const birthDate = new Date(now);
                     birthDate.setFullYear(birthDate.getFullYear() - age);
                     birthDate.setMonth(randomInt(0, 11));
                     birthDate.setDate(randomInt(1, 28));
