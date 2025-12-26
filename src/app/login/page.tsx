@@ -32,15 +32,25 @@ function LoginContent() {
     };
 
     const handleClose = () => {
-        // Strictly attempt to close the window as requested
+        // Aggressive Close Attempt
+        // 1. Standard close
         try {
             window.opener = null;
             window.open("", "_self");
             window.close();
         } catch (e) {
-            console.log("Could not close window:", e);
+            console.log("Standard close failed", e);
         }
-        // Fallback: If browser prevents close, show clean state
+
+        // 2. Fallback: Redirect to about:blank to effectively "kill" the page state
+        // This is the closest we can get to closing a main tab in some browsers
+        setTimeout(() => {
+            if (!document.hidden) { // Check if window is still visible (not closed)
+                window.location.href = "about:blank";
+            }
+        }, 300);
+
+        // 3. Update UI state just in case about:blank is blocked (rare)
         setIsClosed(true);
     };
 
