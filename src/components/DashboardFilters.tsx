@@ -27,34 +27,41 @@ export function DashboardFilters({ departments, doctors, defaultStartDate, defau
     const [startDate, setStartDate] = React.useState(searchParams.get("startDate") || defaultStartDate || "");
     const [endDate, setEndDate] = React.useState(searchParams.get("endDate") || defaultEndDate || "");
 
-    const isInitialized = React.useRef(false);
+    // FIX: Redirect to defaults on Mount if params missing (First Load / Reload behavior)
+    React.useEffect(() => {
+        const params = new URLSearchParams(searchParams.toString());
+        let hasChanges = false;
+
+        if (!params.has("startDate") && defaultStartDate) {
+            params.set("startDate", defaultStartDate);
+            hasChanges = true;
+        }
+        if (!params.has("endDate") && defaultEndDate) {
+            params.set("endDate", defaultEndDate);
+            hasChanges = true;
+        }
+
+        if (hasChanges) {
+            // Use replace to set defaults without adding to history stack (optional, or push)
+            // User wants "Default on Load".
+            router.replace(`${pathname}?${params.toString()}`);
+        }
+    }, []); // Run ONCE on mount
 
     // FIX: Sync local state when URL params change externally
     React.useEffect(() => {
         const urlDepts = searchParams.get("dept")?.split(",").filter(Boolean) || [];
         const urlDoctors = searchParams.get("doctor")?.split(",").filter(Boolean) || [];
 
-        // Remove fallback to default props here. 
-        // If param is missing, it's empty string (Clear action or Back button to empty).
+        // Always trust URL. If empty, it means user cleared it (or we haven't redirected yet).
+        // If we haven't redirected yet (race condition), specific "Mount" logic handles the redirect.
+        // But if we are in valid "Clear" state, URL is empty.
         const urlStart = searchParams.get("startDate") || "";
         const urlEnd = searchParams.get("endDate") || "";
-
-        // Protect initial default state from being wiped by empty URL on first load
-        if (!isInitialized.current) {
-            isInitialized.current = true;
-            // If URL is completely empty associated to dates, keep the default state (from useState)
-            if (!searchParams.has("startDate") && !searchParams.has("endDate")) {
-                // However, we MUST sync other params like Dept/Doctor if they exist
-                if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
-                setSelectedDoctors(urlDoctors);
-                return;
-            }
-        }
 
         if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
         setSelectedDoctors(urlDoctors);
 
-        // Only update if different to avoid loops, but ensure we respect default if URL is empty
         if (urlStart !== startDate) setStartDate(urlStart);
         if (urlEnd !== endDate) setEndDate(urlEnd);
     }, [searchParams]);
