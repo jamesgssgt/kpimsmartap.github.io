@@ -30,14 +30,14 @@ function LoginContent() {
     };
 
     const handleClose = () => {
-        // Stop the loop: Switch to manual login mode effectively
-        // This allows the user to try valid credentials or just sit there
-        setView("login");
-
-        // Optional: Clear URL params without triggering a reload/effect loop? 
-        // If we use router.replace, it might trigger useEffect again.
-        // We will just let the view state override the UI.
-        window.history.replaceState(null, "", "/login");
+        // Strictly attempt to close the window as requested
+        try {
+            window.opener = null;
+            window.open("", "_self");
+            window.close();
+        } catch (e) {
+            console.log("Could not close window:", e);
+        }
     };
 
     useEffect(() => {
