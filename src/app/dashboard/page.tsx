@@ -226,8 +226,16 @@ export default async function DashboardPage(props: {
             }))
             .sort((a, b) => b.value - a.value); // Descending Sort
 
-        // 9. Abnormal Items (Latest within filtered range)
-        const abnormalItems = latestMetrics.filter((item) => item.status === "異常");
+        // 9. Abnormal Items (Abnormal Details for the Month of the Filter End Date)
+        // User request: "術後 48 小時死亡率 (Monthly)異常詳細清單 當月每日的清單明細"
+        // Use kpiRawData (which is already Month-filtered) and filter for Abnormal status.
+
+        const abnormalItems = kpiRawData
+            .filter((item) => item.status === "異常")
+            .sort((a, b) => {
+                if (a.report_date && b.report_date) return new Date(b.report_date).getTime() - new Date(a.report_date).getTime();
+                return 0;
+            });
 
         return (
             <div className="flex-1 space-y-4 p-4 pt-[5px]">
