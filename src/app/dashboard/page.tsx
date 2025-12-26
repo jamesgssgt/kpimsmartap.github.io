@@ -271,7 +271,7 @@ export default async function DashboardPage(props: {
                     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
                         {/* Trend Chart (Left) - Uses Date Range Filter */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-4">
-                            <TrendChart data={trendData} title="指標趨勢 (月統計) 區間年月" />
+                            <TrendChart data={trendData} title="指標趨勢 (月統計)" />
                         </div>
 
                         {/* Bar Chart (Right) - Uses Latest Day */}
