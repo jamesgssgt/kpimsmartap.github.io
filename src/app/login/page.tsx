@@ -17,6 +17,8 @@ function LoginContent() {
     const [view, setView] = useState<"loading" | "login" | "error">("loading");
     const [errorMessage, setErrorMessage] = useState("");
 
+    const [isClosed, setIsClosed] = useState(false);
+
     // Email/Password state
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
@@ -38,6 +40,8 @@ function LoginContent() {
         } catch (e) {
             console.log("Could not close window:", e);
         }
+        // Fallback: If browser prevents close, show clean state
+        setIsClosed(true);
     };
 
     useEffect(() => {
@@ -90,6 +94,14 @@ function LoginContent() {
     };
 
     // Render Views
+    if (isClosed) {
+        return (
+            <div className="min-h-screen flex items-center justify-center bg-background text-muted-foreground">
+                <p>您可以關閉此視窗 (You may close this window now)</p>
+            </div>
+        );
+    }
+
     if (view === "error") {
         return (
             <div className="min-h-screen flex items-center justify-center bg-muted/20">
