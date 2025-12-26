@@ -42,7 +42,7 @@ export function AbnormalTable({ items }: AbnormalTableProps) {
                             <TableHead className="text-white font-bold">年齡</TableHead>
                             <TableHead className="text-white font-bold">入院時間</TableHead>
                             <TableHead className="text-white font-bold">出院時間</TableHead>
-                            <TableHead className="text-white font-bold">異常原因</TableHead>
+                            <TableHead className="text-white font-bold">手術完成時間</TableHead>
                         </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -55,7 +55,7 @@ export function AbnormalTable({ items }: AbnormalTableProps) {
                                 <TableCell>{calculateAge(item.patient_birthday) ?? item.patient_age ?? '-'}</TableCell>
                                 <TableCell>{item.admission_date ? new Date(item.admission_date).toLocaleDateString() : '-'}</TableCell>
                                 <TableCell>{item.discharge_date ? new Date(item.discharge_date).toLocaleDateString() : '-'}</TableCell>
-                                <TableCell className="text-red-600 font-medium">{item.abnormal_reason || '-'}</TableCell>
+                                <TableCell className="font-medium">{item.op_end ? new Date(item.op_end).toLocaleString() : '-'}</TableCell>
                             </TableRow>
                         ))}
                         {items.length === 0 && (
