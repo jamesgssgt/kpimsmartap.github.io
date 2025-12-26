@@ -37,9 +37,9 @@ export function KPITable({ items, title }: KPITableProps) {
                     <TableHeader>
                         <TableRow className="bg-[#1f5f7e] hover:bg-[#1f5f7e]">
                             <TableHead className="text-white font-bold">科別</TableHead>
-                            <TableHead className="text-white font-bold">指標名稱</TableHead>
                             <TableHead className="text-white font-bold">指標值</TableHead>
-                            <TableHead className="text-white font-bold">分子值/分母值</TableHead>
+                            <TableHead className="text-white font-bold">術後 48 小時死亡人次</TableHead>
+                            <TableHead className="text-white font-bold">手術人次</TableHead>
                             <TableHead className="text-white font-bold">燈號</TableHead>
                         </TableRow>
                     </TableHeader>
@@ -47,11 +47,9 @@ export function KPITable({ items, title }: KPITableProps) {
                         {items.map((item, index) => (
                             <TableRow key={index} className="even:bg-slate-50 even:dark:bg-slate-900/50">
                                 <TableCell className="font-medium">{item.department}</TableCell>
-                                <TableCell>{item.indicator_name}</TableCell>
                                 <TableCell>{item.value}{item.unit}</TableCell>
-                                <TableCell>
-                                    {item.numerator} / {item.denominator}
-                                </TableCell>
+                                <TableCell>{item.numerator}</TableCell>
+                                <TableCell>{item.denominator}</TableCell>
                                 <TableCell>
                                     <div className="flex items-center">
                                         <span
