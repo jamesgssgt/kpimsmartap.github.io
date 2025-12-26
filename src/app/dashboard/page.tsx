@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function DashboardPage(props: {
-    searchParams: Promise<{ dept?: string; doctor?: string; startDate?: string; endDate?: string }>;
+    searchParams: Promise<{ dept?: string; doctor?: string; startMonth?: string; endMonth?: string }>;
 }) {
     try {
         const searchParams = await props.searchParams;
@@ -25,8 +25,8 @@ export default async function DashboardPage(props: {
 
         const deptParam = getParam(searchParams?.dept);
         const doctorParam = getParam(searchParams?.doctor);
-        const startDate = getParam(searchParams?.startDate);
-        const endDate = getParam(searchParams?.endDate);
+        const startMonth = getParam(searchParams?.startMonth);
+        const endMonth = getParam(searchParams?.endMonth);
 
         const deptFilterStr = deptParam ? decodeURIComponent(deptParam) : undefined;
         const doctorFilterStr = doctorParam ? decodeURIComponent(doctorParam) : undefined;
@@ -64,41 +64,45 @@ export default async function DashboardPage(props: {
             kpiDetails = kpiDetails.filter(item => doctorFilters.includes(item.doctor));
         }
 
-        // 3. Date Logic
-        // Calculate Max Date globally (before date range filter) or after?
-        // Usually "Latest Day" means latest available in DB (or latest filtered).
-        // Let's use latest available in the currently filtered subset (by dept/doctor).
-        const allDates = kpiDetails
-            .map(d => d.report_date ? new Date(d.report_date).getTime() : 0)
-            .filter(d => d > 0);
+        // 3. Date Logic (Month Based)
+        const allMonths = kpiDetails
+            .map(d => d.report_date ? d.report_date.substring(0, 7) : "")
+            .filter(Boolean);
 
-        const maxDateTs = allDates.length > 0 ? Math.max(...allDates) : 0;
-        const maxDateStr = maxDateTs > 0 ? new Date(maxDateTs).toISOString().split('T')[0] : "";
+        // Find Min/Max Month strings
+        let minMonthStr = "";
+        let maxMonthStr = "";
+
+        if (allMonths.length > 0) {
+            allMonths.sort();
+            minMonthStr = allMonths[0];
+            maxMonthStr = allMonths[allMonths.length - 1];
+        }
+
+        // Find absolute latest date string (YYYY-MM-DD) for Latest Metrics
+        const allFullDates = kpiDetails
+            .map(d => d.report_date ? d.report_date : "")
+            .filter(Boolean);
+        const maxDateStrFull = allFullDates.length > 0 ? allFullDates.sort().pop()! : "";
 
         // 4. Latest Day Metrics (for KPITable)
-        // Filter details where report_date matches maxDateStr
-        const latestMetrics = kpiDetails.filter(d => d.report_date && d.report_date.startsWith(maxDateStr));
+        // Filter details where report_date matches maxDateStrFull
+        const latestMetrics = kpiDetails.filter(d => d.report_date === maxDateStrFull);
 
-        // 5. Trend Chart Data (Filtered by Date Range)
+        // 5. Trend Chart Data (Filtered by Month Range)
         let trendDetails = [...kpiDetails];
-        if (startDate) {
-            trendDetails = trendDetails.filter(d => d.report_date && d.report_date >= startDate);
+        if (startMonth) {
+            trendDetails = trendDetails.filter(d => d.report_date && d.report_date.substring(0, 7) >= startMonth);
         }
-        if (endDate) {
-            trendDetails = trendDetails.filter(d => d.report_date && d.report_date <= endDate);
+        if (endMonth) {
+            trendDetails = trendDetails.filter(d => d.report_date && d.report_date.substring(0, 7) <= endMonth);
         }
 
         const trendMap = new Map<string, { sum: number; count: number }>();
         trendDetails.forEach((item) => {
             if (item.report_date) {
-                const date = new Date(item.report_date);
-                // Group by Day or Month? User said "Monthly" in chart title but asked for "Date Range".
-                // If filtering by specific dates, Daily granularity makes more sense.
-                // Or if range < 2 months -> Daily, else Monthly?
-                // Let's stick to Monthly logic for now as per original, OR switch to Daily if range is small?
-                // Original code was YYYY-MM.
-                // Let's use YYYY-MM-DD for better precision with date pickers.
-                const key = item.report_date.split('T')[0]; // YYYY-MM-DD
+                // Group by Month (YYYY-MM)
+                const key = item.report_date.substring(0, 7); // YYYY-MM
 
                 const current = trendMap.get(key) || { sum: 0, count: 0 };
                 trendMap.set(key, {
@@ -117,7 +121,6 @@ export default async function DashboardPage(props: {
 
         // 6. Bar Chart Data (Latest Day, Mortality, Group by Dept)
         // Filter for specific indicator: "術後 48 小時死亡率"
-        // Note: Check exact indicator name in DB. Assuming "術後 48 小時死亡率".
         const mortalityName = "術後 48 小時死亡率";
         const barRawData = latestMetrics.filter(d => d.indicator_name === mortalityName);
 
@@ -136,9 +139,7 @@ export default async function DashboardPage(props: {
             value: count > 0 ? parseFloat((sum / count).toFixed(2)) : 0
         }));
 
-        // 7. Abnormal Items (from Latest Day? Or filtered range? usually latest needs attention)
-        // User asked for "Latest Day" metrics. Abnormal likely refers to current alerts.
-        // Let's use latestMetrics for abnormal table too.
+        // 7. Abnormal Items (from Latest Day)
         const abnormalItems = latestMetrics.filter((item) => item.status === "異常");
 
         return (
@@ -153,7 +154,12 @@ export default async function DashboardPage(props: {
                         </div>
                     </div>
                     <div className="flex justify-start w-full">
-                        <DashboardFilters departments={departments} doctors={doctors} />
+                        <DashboardFilters
+                            departments={departments}
+                            doctors={doctors}
+                            defaultStartMonth={minMonthStr}
+                            defaultEndMonth={maxMonthStr}
+                        />
                     </div>
                 </div>
 
@@ -167,7 +173,7 @@ export default async function DashboardPage(props: {
 
                         {/* Bar Chart (Right) - Uses Latest Day */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-3">
-                            <DepartmentChart data={barChartData} title={`最新一日 (${maxDateStr}) 術後 48 小時死亡率`} />
+                            <DepartmentChart data={barChartData} title={`最新一日 (${maxDateStrFull}) 術後 48 小時死亡率`} />
                         </div>
                     </div>
 
@@ -195,4 +201,3 @@ export default async function DashboardPage(props: {
         );
     }
 }
-
