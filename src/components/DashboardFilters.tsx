@@ -31,14 +31,20 @@ export function DashboardFilters({ departments, doctors, defaultStartDate, defau
     React.useEffect(() => {
         const urlDepts = searchParams.get("dept")?.split(",").filter(Boolean) || [];
         const urlDoctors = searchParams.get("doctor")?.split(",").filter(Boolean) || [];
-        const urlStart = searchParams.get("startDate") || "";
-        const urlEnd = searchParams.get("endDate") || "";
+
+        // If URL param is missing (null), fallback to default prop. 
+        // Use ?? operator to distinguish between missing (null) and empty string (if logic allowed empty string).
+        // Since get() returns null if missing, and we want default in that case.
+        const urlStart = searchParams.get("startDate") ?? defaultStartDate ?? "";
+        const urlEnd = searchParams.get("endDate") ?? defaultEndDate ?? "";
 
         if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
         setSelectedDoctors(urlDoctors);
+
+        // Only update if different to avoid loops, but ensure we respect default if URL is empty
         if (urlStart !== startDate) setStartDate(urlStart);
         if (urlEnd !== endDate) setEndDate(urlEnd);
-    }, [searchParams]);
+    }, [searchParams, defaultStartDate, defaultEndDate]);
 
     // Sync state with URL
     React.useEffect(() => {
