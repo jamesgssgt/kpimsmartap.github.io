@@ -44,7 +44,7 @@ export function DataGenerator() {
                         <DialogHeader>
                             <DialogTitle>生成範例資料</DialogTitle>
                             <DialogDescription>
-                                將生成 300 筆範例資料並寫入系統。此過程可能需要一點時間。
+                                將生成 1000 筆範例資料並寫入系統。此過程可能需要一點時間。
                             </DialogDescription>
                         </DialogHeader>
                         <div className="py-4 flex justify-center">

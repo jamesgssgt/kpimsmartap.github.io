@@ -135,130 +135,251 @@ export async function generateData() {
         const infra = await createInfrastructure();
         const kpiDetailsBuffer = [];
 
-        // Generate Cases
-        // To avoid timeout, we'll process in chunks, but for 300, 
-        // we might need to be careful. limiting concurrency to 50.
-        const chunks = [];
-        for (let i = 0; i < TOTAL_CASES; i += 50) {
-            chunks.push(i);
+        // Revised Logic:
+        // 1. Coverage: Each Dept, Each Day -> 1 case.
+        // 2. Abnormals: At least 10 per month.
+        // 3. Total: Fill up to 1000.
+
+        // Config
+        const targetTotal = 1000;
+        const daysBack = 100; // 100 days fits nicely into ~1000 cases with 9 depts (900 cases)
+
+        // Flatten depts for easy iteration
+        const allDepts: { hospCode: string; deptInfo: any }[] = [];
+        for (const [hCode, hData] of Object.entries(infra)) {
+            for (const d of hData.depts) {
+                allDepts.push({ hospCode: hCode, deptInfo: d });
+            }
         }
 
-        for (const chunkStart of chunks) {
-            const promises = [];
-            const limit = Math.min(chunkStart + 50, TOTAL_CASES);
+        // Helper to generate a single case
+        const createCase = async (dayIndex: number, specificDept?: any, forceAbnormal?: boolean) => {
+            // Dates - Fixed Anchor to 2025-11-20
+            const now = new Date("2025-11-20T23:59:59");
+            const opStart = new Date(now.getTime() - dayIndex * 24 * 60 * 60 * 1000);
+            opStart.setHours(randomInt(8, 16));
+            opStart.setMinutes(randomInt(0, 59));
 
-            for (let i = chunkStart; i < limit; i++) {
-                promises.push((async () => {
-                    const dayIndex = randomInt(0, DAYS_BACK);
-                    const hospCode = randomChoice(Object.keys(infra));
-                    const hData = infra[hospCode];
-                    const hospName = HOSPITALS.find(h => h.code === hospCode)?.name || "";
+            const opEnd = new Date(opStart.getTime() + randomInt(60, 240) * 60 * 1000);
+            const admissionDate = new Date(opStart.getTime() - randomInt(1, 2) * 24 * 60 * 60 * 1000);
+            const dischargeDate = new Date(opEnd.getTime() + randomInt(2, 10) * 24 * 60 * 60 * 1000);
 
-                    const dept = randomChoice(hData.depts);
-                    // @ts-ignore
-                    const deptName = DEPT_TEMPLATE[dept.dept_code].name;
+            // Select Dept
+            let chosenDeptObj = specificDept;
+            let hCode = "";
 
-                    const docId = randomChoice(dept.doctors);
-                    const docName = dept.doc_names[docId];
+            if (!chosenDeptObj) {
+                const randomSel = randomChoice(allDepts);
+                chosenDeptObj = randomSel.deptInfo;
+                hCode = randomSel.hospCode;
+            } else {
+                // Find hosp code for specific dept? (Not strictly needed for logic below if we have the object)
+                // We need hCode for risk calculation if we want to follow original logic, 
+                // but simpler is to just use the object.
+                // Let's assume specificDept passed is from allDepts structure if possible, 
+                // or we just look it up.
+                // For the loop 'allDepts', we have hCode.
+            }
 
-                    // Dates - Fixed Anchor to 2025-11-20
-                    const now = new Date("2025-11-20T23:59:59");
-                    const opStart = new Date(now.getTime() - dayIndex * 24 * 60 * 60 * 1000);
-                    opStart.setHours(randomInt(8, 16));
-                    const opEnd = new Date(opStart.getTime() + randomInt(60, 240) * 60 * 1000);
+            // Re-find hData if needed for risk - simplifying risk for this forced generation
+            // Risk logic
+            let isBad = false;
+            if (forceAbnormal) {
+                isBad = true;
+            } else {
+                // Low random chance for normal coverage
+                isBad = Math.random() < 0.02;
+            }
 
-                    const admissionDate = new Date(opStart.getTime() - randomInt(1, 2) * 24 * 60 * 60 * 1000);
-                    const dischargeDate = new Date(opEnd.getTime() + randomInt(2, 10) * 24 * 60 * 60 * 1000);
+            let isDeceased = false;
+            let abnormalReason = null;
+            let deathTime = null;
 
-                    // Risk
-                    let risk = 0.015 * hData.risk;
-                    if (dayIndex > 60 && dayIndex < 90) risk += 0.08;
-                    const isBad = Math.random() < risk;
+            if (isBad) {
+                deathTime = new Date(opEnd.getTime() + randomInt(2, 46) * 60 * 60 * 1000);
+                isDeceased = true;
+                abnormalReason = "術後48小時內死亡";
+                // FIX: If deceased, Discharge Date is Death Time
+                dischargeDate.setTime(deathTime.getTime());
+            }
 
-                    let isDeceased = false;
-                    let abnormalReason = null;
-                    let deathTime = null;
+            // Decorate Data
+            // @ts-ignore
+            const deptName = DEPT_TEMPLATE[chosenDeptObj.dept_code].name;
+            const docId = randomChoice(chosenDeptObj.doctors as string[]);
+            const docName = chosenDeptObj.doc_names[docId];
 
-                    if (isBad) {
-                        deathTime = new Date(opEnd.getTime() + randomInt(2, 46) * 60 * 60 * 1000);
-                        isDeceased = true;
-                        abnormalReason = "術後48小時內死亡";
-                    }
+            // FHIR Resources
+            const patId = getLongId();
+            const gender = randomChoice(["male", "female"]);
+            const age = randomInt(20, 90);
+            const birthDate = new Date(now);
+            birthDate.setFullYear(birthDate.getFullYear() - age);
+            birthDate.setMonth(randomInt(0, 11));
+            birthDate.setDate(randomInt(1, 28));
+            const birthDateStr = birthDate.toISOString().split('T')[0];
 
-                    // FHIR Resources
-                    const patId = getLongId();
-                    const gender = randomChoice(["male", "female"]);
-                    const age = randomInt(20, 90);
-                    // Use 'now' (simulation anchor) for birth calculation
-                    const birthDate = new Date(now);
-                    birthDate.setFullYear(birthDate.getFullYear() - age);
-                    birthDate.setMonth(randomInt(0, 11));
-                    birthDate.setDate(randomInt(1, 28));
-                    const birthDateStr = birthDate.toISOString().split('T')[0]; // YYYY-MM-DD
+            // ... Saving FHIR resources
+            await fhirSave("Patient", {
+                resourceType: "Patient",
+                id: patId,
+                gender: gender,
+                birthDate: birthDateStr,
+                deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined
+            });
 
-                    const patResource: any = {
-                        resourceType: "Patient",
-                        id: patId,
-                        gender: gender,
-                        birthDate: birthDateStr
-                    };
-                    if (isDeceased && deathTime) {
-                        patResource.deceasedDateTime = deathTime.toISOString();
-                    }
-                    await fhirSave("Patient", patResource);
+            const encId = getLongId();
+            await fhirSave("Encounter", {
+                resourceType: "Encounter",
+                id: encId,
+                status: "finished",
+                class: { code: "IMP" },
+                subject: { reference: `Patient/${patId}` },
+                serviceProvider: { reference: `Organization/${chosenDeptObj.org_id}`, display: chosenDeptObj.org_name },
+                hospitalization: isBad ? { dischargeDisposition: { coding: [{ code: "exp" }] } } : undefined
+            });
 
-                    const encId = getLongId();
-                    const encResource: any = {
-                        resourceType: "Encounter",
-                        id: encId,
-                        status: "finished",
-                        class: { code: "IMP" },
-                        subject: { reference: `Patient/${patId}` },
-                        serviceProvider: { reference: `Organization/${dept.org_id}`, display: dept.org_name }
-                    };
-                    if (isBad) {
-                        encResource.hospitalization = { dischargeDisposition: { coding: [{ code: "exp" }] } };
-                    }
-                    await fhirSave("Encounter", encResource);
+            const procId = getLongId();
+            await fhirSave("Procedure", {
+                resourceType: "Procedure",
+                id: procId,
+                status: "completed",
+                subject: { reference: `Patient/${patId}` },
+                encounter: { reference: `Encounter/${encId}` },
+                performedPeriod: { end: opEnd.toISOString() },
+                code: { coding: [{ display: "Surgery" }] },
+                performer: [{ actor: { reference: `Practitioner/${docId}` } }]
+            });
 
-                    const procId = getLongId();
-                    const procResource: any = {
-                        resourceType: "Procedure",
-                        id: procId,
-                        status: "completed",
-                        subject: { reference: `Patient/${patId}` },
-                        encounter: { reference: `Encounter/${encId}` },
-                        performedPeriod: { end: opEnd.toISOString() },
-                        code: { coding: [{ display: "Surgery" }] },
-                        performer: [{ actor: { reference: `Practitioner/${docId}` } }]
-                    };
-                    await fhirSave("Procedure", procResource);
+            // Report Date Logic: 
+            // If Death -> Death Date (which is now dischargeDate)
+            // If Alive -> Discharge Date
+            const reportDate = dischargeDate.toISOString();
 
-                    // Collect Data
-                    return {
-                        // hospital: hospName, // DB doesn't have hospital column currently
-                        department: deptName,
-                        doctor: docName,
-                        indicator_name: "術後48小時死亡率",
-                        indicator_def: "手術後死亡人數 / 手術總次數",
-                        numerator: isDeceased ? 1 : 0,
-                        denominator: 1,
-                        value: isDeceased ? 1 : 0,
-                        patient_id: patId,
-                        patient_gender: gender, // Match DB column
-                        patient_birthday: birthDateStr,
-                        status: isDeceased ? "異常" : "正常",
-                        unit: "%",
-                        report_date: opStart.toISOString(),
-                        admission_date: admissionDate.toISOString(),
-                        discharge_date: dischargeDate.toISOString(),
-                        abnormal_reason: abnormalReason
-                    };
-                })());
-            } // end loop 
-            const results = await Promise.all(promises);
-            kpiDetailsBuffer.push(...results);
-        } // end chunks
+            return {
+                department: deptName,
+                doctor: docName,
+                indicator_name: "術後48小時死亡率",
+                indicator_def: "手術後死亡人數 / 手術總次數",
+                numerator: isDeceased ? 1 : 0,
+                denominator: 1,
+                value: isDeceased ? 1 : 0,
+                patient_id: patId,
+                patient_gender: gender,
+                patient_birthday: birthDateStr,
+                status: isDeceased ? "異常" : "正常",
+                unit: "%",
+                report_date: reportDate,
+                admission_date: admissionDate.toISOString(),
+                discharge_date: dischargeDate.toISOString(),
+                abnormal_reason: abnormalReason,
+                monthKey: opStart.toISOString().substring(0, 7) // for tracking
+            };
+        };
+
+        // 1. Coverage Loop
+        // Generate promises in chunks to prevent overwhelming
+        const coveragePromises = [];
+
+        for (let d = 0; d < daysBack; d++) {
+            for (const deptItem of allDepts) {
+                coveragePromises.push(() => createCase(d, deptItem.deptInfo, false));
+            }
+        }
+
+        // Execute Coverage
+        // Process in chunks of 50
+        const generatedItems = [];
+        const abnormalCounts: Record<string, number> = {};
+
+        const processBatch = async (taskFactories: (() => Promise<any>)[]) => {
+            const results = [];
+            for (let i = 0; i < taskFactories.length; i += 50) {
+                const batch = taskFactories.slice(i, i + 50);
+                const batchRes = await Promise.all(batch.map(f => f()));
+                results.push(...batchRes);
+            }
+            return results;
+        };
+
+        const coverageResults = await processBatch(coveragePromises);
+        generatedItems.push(...coverageResults);
+
+        // Count Abnormals
+        coverageResults.forEach(item => {
+            if (item.numerator > 0) {
+                abnormalCounts[item.monthKey] = (abnormalCounts[item.monthKey] || 0) + 1;
+            }
+        });
+
+        // 2. Abnormal Filling
+        const abnormalPromises = [];
+        // Identify months we covered
+        const coveredMonths = new Set(generatedItems.map(i => i.monthKey));
+
+        for (const m of Array.from(coveredMonths)) {
+            const currentCount = abnormalCounts[m] || 0;
+            if (currentCount < 10) {
+                const needed = 10 - currentCount;
+                for (let k = 0; k < needed; k++) {
+                    // Find a random day in this month?
+                    // Simplified: just pick a random dayIndex that maps to this month?
+                    // Easier: Iterative check or just pick random days until we hit the month.
+                    // Or reuse createCase with a specific dayIndex?
+                    // We need to reverse map Month -> DayIndex ranges.
+                    // Since dayIndex 0 = Nov 20, DayIndex inc = Date dec.
+                    // We can just pick a random dayIndex roughly.
+                    // OR: simpler, just pass a flag to createCase to "pick a day in this month".
+                    // But createCase takes dayIndex.
+                    // Let's just generate random dayIndices (0..100) until we find appropriate month?
+
+                    // Actually, let's just create a new helper or pick a valid dayIndex.
+                    // Month M (e.g. 2025-11).
+                    // We iterate 0..100. Calculate month. If match, use it.
+                    // Optimization: Pre-map dayIndex to Month.
+                }
+            }
+        }
+
+        // Refined Abnormal Filling Strategy:
+        // We know dayIndex 0 is Nov 20. 
+        // We can just iterate available dayIndices, group by Month.
+        const daysByMonth: Record<string, number[]> = {};
+        for (let d = 0; d < daysBack; d++) {
+            const now = new Date("2025-11-20T23:59:59");
+            const date = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
+            const mKey = date.toISOString().substring(0, 7);
+            if (!daysByMonth[mKey]) daysByMonth[mKey] = [];
+            daysByMonth[mKey].push(d);
+        }
+
+        for (const [mKey, days] of Object.entries(daysByMonth)) {
+            const currentCount = abnormalCounts[mKey] || 0;
+            const needed = 10 - currentCount;
+            if (needed > 0) {
+                for (let k = 0; k < needed; k++) {
+                    const dIndex = randomChoice(days);
+                    abnormalPromises.push(() => createCase(dIndex, undefined, true));
+                }
+            }
+        }
+
+        const abnormalResults = await processBatch(abnormalPromises);
+        generatedItems.push(...abnormalResults);
+
+        // 3. Fill Remainder to Target
+        let currentTotal = generatedItems.length;
+        const fillPromises = [];
+        while (currentTotal < targetTotal) {
+            const dIndex = randomInt(0, daysBack - 1);
+            fillPromises.push(() => createCase(dIndex, undefined, false));
+            currentTotal++;
+        }
+
+        const fillResults = await processBatch(fillPromises);
+        generatedItems.push(...fillResults);
+
+        kpiDetailsBuffer.push(...generatedItems);
 
         // Aggregate KPI in memory
         const summaryMap = new Map<string, any>();
@@ -303,7 +424,9 @@ export async function generateData() {
         if (kpiError) console.error("Error saving KPI Summary:", kpiError);
 
         // 2. KPI Details
-        const { error: detailError } = await supabase.from("KPI_Detail").insert(kpiDetailsBuffer);
+        // Remove 'monthKey' which is for internal logic only
+        const cleanDetails = kpiDetailsBuffer.map(({ monthKey, ...rest }) => rest);
+        const { error: detailError } = await supabase.from("KPI_Detail").insert(cleanDetails);
         if (detailError) console.error("Error saving KPI Details:", detailError);
 
         if (kpiError || detailError) {

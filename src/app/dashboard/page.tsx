@@ -162,7 +162,7 @@ export default async function DashboardPage(props: {
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標儀表板] 最近一日指標監控 (${latestFilteredDateStr || "無資料"})`}
+                            title={`[指標儀表板] 收案月份至資料最後一日指標監控 (${latestFilteredDateStr || "無資料"})`}
                         />
                     </div>
 
@@ -170,21 +170,22 @@ export default async function DashboardPage(props: {
                     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
                         {/* Trend Chart (Left) - Uses Date Range Filter */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-4">
-                            <TrendChart data={trendData} title="指標趨勢 (月統計)" />
+                            <TrendChart data={trendData} title="指標趨勢 (月統計) 區間年月" />
                         </div>
 
                         {/* Bar Chart (Right) - Uses Latest Day */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-3">
-                            <DepartmentChart data={barChartData} title="最近一日 術後 48 小時死亡率" />
+                            <DepartmentChart data={barChartData} title="最近一月 術後 48 小時死亡率" />
                         </div>
                     </div>
+                </div>
 
-                    {/* BOTTOM: Abnormal Table */}
-                    <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems} />
-                    </div>
+                {/* BOTTOM: Abnormal Table */}
+                <div className="space-y-4">
+                    <AbnormalTable items={abnormalItems} />
                 </div>
             </div>
+
         );
 
     } catch (error) {
