@@ -23,7 +23,7 @@ export function DepartmentChart({ data, title = "各科別指標數值" }: Depar
             </CardHeader>
             <CardContent className="pl-0">
                 <ResponsiveContainer width="100%" height={300}>
-                    <BarChart data={data} layout="vertical" margin={{ top: 5, right: 30, left: 20, bottom: 5 }}>
+                    <BarChart data={data} layout="vertical" margin={{ top: 5, right: 60, left: 20, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" horizontal={true} vertical={false} opacity={0.3} />
                         <XAxis type="number" hide />
                         <YAxis
