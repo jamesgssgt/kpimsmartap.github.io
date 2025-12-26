@@ -53,9 +53,30 @@ export function AbnormalTable({ items }: AbnormalTableProps) {
                                 <TableCell className="font-mono text-xs">{item.patient_id}</TableCell>
                                 <TableCell>{item.patient_gender === 'male' ? '男' : item.patient_gender === 'female' ? '女' : item.patient_gender || '-'}</TableCell>
                                 <TableCell>{calculateAge(item.patient_birthday) ?? item.patient_age ?? '-'}</TableCell>
-                                <TableCell>{item.admission_date ? new Date(item.admission_date).toLocaleDateString() : '-'}</TableCell>
-                                <TableCell>{item.discharge_date ? new Date(item.discharge_date).toLocaleDateString() : '-'}</TableCell>
-                                <TableCell className="font-medium">{item.op_end ? new Date(item.op_end).toLocaleString() : '-'}</TableCell>
+                                <TableCell>
+                                    {item.admission_date ? new Date(item.admission_date).toLocaleDateString('zh-TW', {
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit'
+                                    }) : '-'}
+                                </TableCell>
+                                <TableCell>
+                                    {item.discharge_date ? new Date(item.discharge_date).toLocaleDateString('zh-TW', {
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit'
+                                    }) : '-'}
+                                </TableCell>
+                                <TableCell className="font-medium">
+                                    {item.op_end ? new Date(item.op_end).toLocaleString('zh-TW', {
+                                        year: 'numeric',
+                                        month: '2-digit',
+                                        day: '2-digit',
+                                        hour: '2-digit',
+                                        minute: '2-digit',
+                                        hour12: false
+                                    }) : '-'}
+                                </TableCell>
                             </TableRow>
                         ))}
                         {items.length === 0 && (

@@ -108,8 +108,12 @@ export default async function DashboardPage(props: {
         // NO Doctor column in the file I just read (Step 953).
         // So I should aggregate by Department + Indicator.
 
+        // DRILL DOWN LOGIC
+        const isDrillDown = deptFilters.length > 0;
+
         const kpiAggMap = new Map<string, {
             dept: string;
+            doctor: string;
             indicator: string;
             num: number;
             den: number;
@@ -117,9 +121,13 @@ export default async function DashboardPage(props: {
         }>();
 
         kpiRawData.forEach(item => {
-            const key = `${item.department}|${item.indicator_name}`;
+            // If drill down, aggregate by Doctor. Else by Dept.
+            const groupKey = isDrillDown ? item.doctor : item.department;
+            const key = `${groupKey}|${item.indicator_name}`;
+
             const current = kpiAggMap.get(key) || {
                 dept: item.department,
+                doctor: item.doctor,
                 indicator: item.indicator_name,
                 num: 0,
                 den: 0,
@@ -138,19 +146,14 @@ export default async function DashboardPage(props: {
                 id: "-1", // Dummy ID
                 created_at: "",
                 department: agg.dept,
-                doctor: "", // Aggregated
+                doctor: agg.doctor, // Now populated if drill down
                 indicator_name: agg.indicator,
                 indicator_def: "",
                 numerator: agg.num,
                 denominator: agg.den,
                 value: val,
                 unit: agg.unit,
-                status: val > 0 ? "異常" : "正常", // Simple logic: if mortality > 0 it's "Abnormal" technically? Or just use value check. 
-                // Note: Original item.status was per case. 
-                // Threshold for mortality is usually 0. But let's set status based on value > 0 for now or "Normal".
-                // Actually the user didn't specify threshold. 
-                // Logic: If any abnormal existed? Or just Value > 0?
-                // Let's assume > 0 is Warning/Abnormal for Mortality.
+                status: val > 0 ? "異常" : "正常",
                 patient_id: "",
                 patient_gender: "",
                 patient_birthday: "",
@@ -190,15 +193,7 @@ export default async function DashboardPage(props: {
         const targetDateForBar = endDate || globalMaxDateStr;
         const barMonthPrefix = targetDateForBar ? targetDateForBar.substring(0, 7) : ""; // YYYY-MM
 
-        const mortalityName = "術後48小時死亡率"; // Note: DB value is usually without spaces? Checking Generate Data: "術後48小時死亡率" (no spaces)
-        // Wait, Generate Data code says: "術後48小時死亡率"
-        // But previous code said: "術後 48 小時死亡率" (with spaces). 
-        // Let's match flexible or check data. 
-        // generate-data.ts Line 266: indicator_name: "術後48小時死亡率"
-        // DashboardPage.tsx Line 119: const mortalityName = "術後 48 小時死亡率";
-        // This mismatch might explain empty charts before? Or maybe I misread.
-        // I will use "術後48小時死亡率" to match generate-data.ts, but standardizing is better.
-        // Let's assume generate-data.ts is the source of truth for NEW data.
+        const mortalityName = "術後48小時死亡率";
 
         // Filter filteredDetails (which is strictly range filtered)? 
         // User said: "迄日當月的累計值". 
@@ -212,16 +207,18 @@ export default async function DashboardPage(props: {
 
         const deptBarMap = new Map<string, { num: number; den: number }>();
         barRawData.forEach(item => {
-            const current = deptBarMap.get(item.department) || { num: 0, den: 0 };
-            deptBarMap.set(item.department, {
+            // Aggregate key: If drill down, use Doctor. Else Dept.
+            const key = isDrillDown ? item.doctor : item.department;
+            const current = deptBarMap.get(key) || { num: 0, den: 0 };
+            deptBarMap.set(key, {
                 num: current.num + item.numerator,
                 den: current.den + item.denominator
             });
         });
 
         const barChartData = Array.from(deptBarMap.entries())
-            .map(([department, { num, den }]) => ({
-                department,
+            .map(([key, { num, den }]) => ({
+                department: key, // Reusing 'department' field for display label (it will contain doctor name if drill down)
                 value: den > 0 ? parseFloat(((num / den) * 100).toFixed(2)) : 0
             }))
             .sort((a, b) => b.value - a.value); // Descending Sort
@@ -264,6 +261,7 @@ export default async function DashboardPage(props: {
                         <KPITable
                             items={latestMetrics}
                             title={`[指標監控] 術後 48 小時死亡率-月監控資料最後一日指標監控 (${latestFilteredDateStr ? latestFilteredDateStr.split('T')[0] : "無資料"})`}
+                            viewType={isDrillDown ? "doctor" : "department"}
                         />
                     </div>
 
@@ -276,7 +274,10 @@ export default async function DashboardPage(props: {
 
                         {/* Bar Chart (Right) - Uses Latest Day */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-3">
-                            <DepartmentChart data={barChartData} title="最近一月依科別 術後 48 小時死亡率" />
+                            <DepartmentChart
+                                data={barChartData}
+                                title={isDrillDown ? "依醫師 術後 48 小時死亡率" : "最近一月依科別 術後 48 小時死亡率"}
+                            />
                         </div>
                     </div>
                 </div>
