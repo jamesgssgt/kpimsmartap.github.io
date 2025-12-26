@@ -8,6 +8,7 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { KPIItem, KPIDetail } from "@/types/dashboard";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 export default async function DashboardPage(props: {
     searchParams: Promise<{ dept?: string; doctor?: string }>;
