@@ -30,12 +30,14 @@ function LoginContent() {
     };
 
     const handleClose = () => {
-        // Attempt to close window if it's a popup, otherwise reload or reset
-        window.opener = null;
-        window.open("", "_self");
-        window.close();
-        // Fallback for non-popup
-        window.location.href = "/";
+        // Stop the loop: Switch to manual login mode effectively
+        // This allows the user to try valid credentials or just sit there
+        setView("login");
+
+        // Optional: Clear URL params without triggering a reload/effect loop? 
+        // If we use router.replace, it might trigger useEffect again.
+        // We will just let the view state override the UI.
+        window.history.replaceState(null, "", "/login");
     };
 
     useEffect(() => {
