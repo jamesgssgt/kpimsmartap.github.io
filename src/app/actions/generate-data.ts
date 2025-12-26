@@ -252,9 +252,8 @@ export async function generateData() {
             });
 
             // Report Date Logic: 
-            // If Death -> Death Date (which is now dischargeDate)
-            // If Alive -> Discharge Date
-            const reportDate = dischargeDate.toISOString();
+            // Updated Request: Report calculated by Surgery Completion Date (Cohort Method)
+            const reportDate = opEnd.toISOString();
 
             return {
                 department: deptName,
@@ -272,6 +271,9 @@ export async function generateData() {
                 report_date: reportDate,
                 admission_date: admissionDate.toISOString(),
                 discharge_date: dischargeDate.toISOString(),
+                // NEW: Surgery Execution Times
+                op_start: opStart.toISOString(),
+                op_end: opEnd.toISOString(),
                 abnormal_reason: abnormalReason,
                 monthKey: opStart.toISOString().substring(0, 7) // for tracking
             };

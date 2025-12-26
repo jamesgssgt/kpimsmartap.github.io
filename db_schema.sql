@@ -37,6 +37,8 @@ CREATE TABLE "KPI_Detail" (
     report_date timestamp with time zone,
     admission_date timestamp with time zone,
     discharge_date timestamp with time zone,
+    op_start timestamp with time zone,
+    op_end timestamp with time zone,
     abnormal_reason text
 );
 
