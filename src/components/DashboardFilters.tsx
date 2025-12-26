@@ -3,6 +3,7 @@
 import * as React from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { MultiSelect } from "@/components/MultiSelect";
+import { Input } from "@/components/ui/input";
 
 interface DashboardFiltersProps {
     departments: string[];
@@ -21,114 +22,121 @@ export function DashboardFilters({ departments, doctors }: DashboardFiltersProps
         () => searchParams.get("doctor")?.split(",").filter(Boolean) || []
     );
 
-    // FIX: Sync local state when URL params change externally (e.g. from KPITable click)
+    const [startDate, setStartDate] = React.useState(searchParams.get("startDate") || "");
+    const [endDate, setEndDate] = React.useState(searchParams.get("endDate") || "");
+
+    // FIX: Sync local state when URL params change externally
     React.useEffect(() => {
         const urlDepts = searchParams.get("dept")?.split(",").filter(Boolean) || [];
         const urlDoctors = searchParams.get("doctor")?.split(",").filter(Boolean) || [];
+        const urlStart = searchParams.get("startDate") || "";
+        const urlEnd = searchParams.get("endDate") || "";
 
-        // Update local state if URL differs from current state
-        // We use JSON.stringify for simple array comparison
-        if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) {
-            setSelectedDepts(urlDepts);
-        }
+        if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
         setSelectedDoctors(urlDoctors);
+        if (urlStart !== startDate) setStartDate(urlStart);
+        if (urlEnd !== endDate) setEndDate(urlEnd);
     }, [searchParams]);
 
-    // Sync state with URL and Linked Logic
+    // Sync state with URL
     React.useEffect(() => {
         const timer = setTimeout(() => {
             let finalDepts = [...selectedDepts];
 
-            // 1. Sync Logic: REMOVED as per user request ("不要連動版本")
-            // If doctors are selected, we do NOT automatically select their departments anymore.
-
-            /* 
-            if (selectedDoctors.length > 0) {
-                // ... logic removed ...
-            } 
-            */
-
             // 2. Build URL Params
             const params = new URLSearchParams(searchParams.toString());
 
-            if (finalDepts.length > 0) {
-                params.set("dept", finalDepts.join(","));
-            } else {
-                params.delete("dept");
-            }
+            if (finalDepts.length > 0) params.set("dept", finalDepts.join(","));
+            else params.delete("dept");
 
-            if (selectedDoctors.length > 0) {
-                params.set("doctor", selectedDoctors.join(","));
-            } else {
-                params.delete("doctor");
-            }
+            if (selectedDoctors.length > 0) params.set("doctor", selectedDoctors.join(","));
+            else params.delete("doctor");
+
+            if (startDate) params.set("startDate", startDate);
+            else params.delete("startDate");
+
+            if (endDate) params.set("endDate", endDate);
+            else params.delete("endDate");
 
             const newQueryString = params.toString();
             const currentQueryString = searchParams.toString();
 
-            // Only push if query changed to prevent redundant dynamic routing
             if (newQueryString !== currentQueryString) {
                 router.push(`${pathname}?${newQueryString}`);
             }
-        }, 1000); // 1 second delay to allow multiple selections
+        }, 800);
 
         return () => clearTimeout(timer);
-    }, [selectedDepts, selectedDoctors, router, pathname, searchParams, doctors]);
+    }, [selectedDepts, selectedDoctors, startDate, endDate, router, pathname, searchParams]);
 
-    const handleDeptChange = (depts: string[]) => {
-        setSelectedDepts(depts);
-    };
-
-    const handleDoctorChange = (docs: string[]) => {
-        setSelectedDoctors(docs);
-    };
+    const handleDeptChange = (depts: string[]) => setSelectedDepts(depts);
+    const handleDoctorChange = (docs: string[]) => setSelectedDoctors(docs);
 
     // Filtered options
     const deptOptions = departments.map(d => ({ label: d, value: d }));
-
-    // Filter doctor options based on selected departments
     const availableDoctors = selectedDepts.length > 0
         ? doctors.filter(d => selectedDepts.includes(d.dept))
         : doctors;
-
     const doctorOptions = availableDoctors.map(d => ({ label: d.name, value: d.name }));
 
     return (
-        <div className="flex flex-col sm:flex-row gap-6 items-start sm:items-center">
-            <div className="flex items-center gap-2">
-                <span className="font-medium whitespace-nowrap">科別：</span>
-                <div className="w-[200px]">
-                    <MultiSelect
-                        options={deptOptions}
-                        selected={selectedDepts}
-                        onChange={handleDeptChange}
-                        placeholder="篩選科別..."
+        <div className="flex flex-col gap-4 w-full">
+            <div className="flex flex-col sm:flex-row gap-6 items-start sm:items-center flex-wrap">
+                {/* Filters Row 1 */}
+                <div className="flex items-center gap-2">
+                    <span className="font-medium whitespace-nowrap">日期區間：</span>
+                    <Input
+                        type="date"
+                        value={startDate}
+                        onChange={(e) => setStartDate(e.target.value)}
+                        className="w-[150px]"
+                    />
+                    <span>~</span>
+                    <Input
+                        type="date"
+                        value={endDate}
+                        onChange={(e) => setEndDate(e.target.value)}
+                        className="w-[150px]"
                     />
                 </div>
-            </div>
-            <div className="flex items-center gap-2">
-                <span className="font-medium whitespace-nowrap">醫師：</span>
-                <div className="w-[200px]">
-                    <MultiSelect
-                        options={doctorOptions}
-                        selected={selectedDoctors}
-                        onChange={handleDoctorChange}
-                        placeholder="篩選醫師..."
-                    />
-                </div>
-            </div>
 
-            {(selectedDepts.length > 0 || selectedDoctors.length > 0) && (
-                <button
-                    onClick={() => {
-                        setSelectedDepts([]);
-                        setSelectedDoctors([]);
-                    }}
-                    className="px-4 py-2 bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-md text-sm font-medium transition-colors"
-                >
-                    清除全部篩選
-                </button>
-            )}
-        </div >
+                <div className="flex items-center gap-2">
+                    <span className="font-medium whitespace-nowrap">科別：</span>
+                    <div className="w-[200px]">
+                        <MultiSelect
+                            options={deptOptions}
+                            selected={selectedDepts}
+                            onChange={handleDeptChange}
+                            placeholder="篩選科別..."
+                        />
+                    </div>
+                </div>
+                <div className="flex items-center gap-2">
+                    <span className="font-medium whitespace-nowrap">醫師：</span>
+                    <div className="w-[200px]">
+                        <MultiSelect
+                            options={doctorOptions}
+                            selected={selectedDoctors}
+                            onChange={handleDoctorChange}
+                            placeholder="篩選醫師..."
+                        />
+                    </div>
+                </div>
+
+                {(selectedDepts.length > 0 || selectedDoctors.length > 0 || startDate || endDate) && (
+                    <button
+                        onClick={() => {
+                            setSelectedDepts([]);
+                            setSelectedDoctors([]);
+                            setStartDate("");
+                            setEndDate("");
+                        }}
+                        className="px-4 py-2 bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-md text-sm font-medium transition-colors"
+                    >
+                        清除全部篩選
+                    </button>
+                )}
+            </div>
+        </div>
     );
 }
