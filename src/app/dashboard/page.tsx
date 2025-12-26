@@ -7,6 +7,8 @@ import { DashboardFilters } from "@/components/DashboardFilters";
 import { SignOutButton } from "@/components/SignOutButton";
 import { KPIItem, KPIDetail } from "@/types/dashboard";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardPage(props: {
     searchParams: Promise<{ dept?: string; doctor?: string }>;
 }) {
