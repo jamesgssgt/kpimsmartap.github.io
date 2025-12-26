@@ -12,7 +12,7 @@ export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function DashboardPage(props: {
-    searchParams: Promise<{ dept?: string; doctor?: string; startMonth?: string; endMonth?: string }>;
+    searchParams: Promise<{ dept?: string; doctor?: string; startDate?: string; endDate?: string }>;
 }) {
     try {
         const searchParams = await props.searchParams;
@@ -25,8 +25,8 @@ export default async function DashboardPage(props: {
 
         const deptParam = getParam(searchParams?.dept);
         const doctorParam = getParam(searchParams?.doctor);
-        const startMonth = getParam(searchParams?.startMonth);
-        const endMonth = getParam(searchParams?.endMonth);
+        const startDate = getParam(searchParams?.startDate);
+        const endDate = getParam(searchParams?.endDate);
 
         const deptFilterStr = deptParam ? decodeURIComponent(deptParam) : undefined;
         const doctorFilterStr = doctorParam ? decodeURIComponent(doctorParam) : undefined;
@@ -64,46 +64,42 @@ export default async function DashboardPage(props: {
             kpiDetails = kpiDetails.filter(item => doctorFilters.includes(item.doctor));
         }
 
-        // 3. Date Logic (Month Based)
-        const allMonths = kpiDetails
-            .map(d => d.report_date ? d.report_date.substring(0, 7) : "")
-            .filter(Boolean);
+        // 3. Date Range Logic & Defaults
+        const allDates = kpiDetails
+            .map(d => d.report_date ? new Date(d.report_date).getTime() : 0)
+            .filter(d => d > 0);
 
-        // Find Min/Max Month strings
-        let minMonthStr = "";
-        let maxMonthStr = "";
+        const globalMaxDateTs = allDates.length > 0 ? Math.max(...allDates) : 0;
+        const globalMinDateTs = allDates.length > 0 ? Math.min(...allDates) : 0;
 
-        if (allMonths.length > 0) {
-            allMonths.sort();
-            minMonthStr = allMonths[0];
-            maxMonthStr = allMonths[allMonths.length - 1];
+        const globalMaxDateStr = globalMaxDateTs > 0 ? new Date(globalMaxDateTs).toISOString().split('T')[0] : "";
+        const globalMinDateStr = globalMinDateTs > 0 ? new Date(globalMinDateTs).toISOString().split('T')[0] : "";
+
+        // 4. Apply Date Range Filter to Data
+        let filteredDetails = [...kpiDetails];
+        if (startDate) {
+            filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date >= startDate);
+        }
+        if (endDate) {
+            filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date <= endDate);
         }
 
-        // Find absolute latest date string (YYYY-MM-DD) for Latest Metrics
-        const allFullDates = kpiDetails
+        // 5. Find "Latest Day" WITHIN the filtered range
+        // If range is 2024-01-01 ~ 2024-01-10, latest day is max date in this range.
+        const filteredDates = filteredDetails
             .map(d => d.report_date ? d.report_date : "")
             .filter(Boolean);
-        const maxDateStrFull = allFullDates.length > 0 ? allFullDates.sort().pop()! : "";
 
-        // 4. Latest Day Metrics (for KPITable)
-        // Filter details where report_date matches maxDateStrFull
-        const latestMetrics = kpiDetails.filter(d => d.report_date === maxDateStrFull);
+        const latestFilteredDateStr = filteredDates.length > 0 ? filteredDates.sort().pop()! : "";
 
-        // 5. Trend Chart Data (Filtered by Month Range)
-        let trendDetails = [...kpiDetails];
-        if (startMonth) {
-            trendDetails = trendDetails.filter(d => d.report_date && d.report_date.substring(0, 7) >= startMonth);
-        }
-        if (endMonth) {
-            trendDetails = trendDetails.filter(d => d.report_date && d.report_date.substring(0, 7) <= endMonth);
-        }
+        // 6. Latest Day Metrics (for KPITable & Bar Chart)
+        const latestMetrics = filteredDetails.filter(d => d.report_date === latestFilteredDateStr);
 
+        // 7. Trend Chart Data (Group by Month - YYYY-MM)
         const trendMap = new Map<string, { sum: number; count: number }>();
-        trendDetails.forEach((item) => {
+        filteredDetails.forEach((item) => {
             if (item.report_date) {
-                // Group by Month (YYYY-MM)
                 const key = item.report_date.substring(0, 7); // YYYY-MM
-
                 const current = trendMap.get(key) || { sum: 0, count: 0 };
                 trendMap.set(key, {
                     sum: current.sum + item.value,
@@ -119,12 +115,10 @@ export default async function DashboardPage(props: {
             }))
             .sort((a, b) => a.date.localeCompare(b.date));
 
-        // 6. Bar Chart Data (Latest Day, Mortality, Group by Dept)
-        // Filter for specific indicator: "術後 48 小時死亡率"
+        // 8. Bar Chart Data (Latest Day within filtered range)
         const mortalityName = "術後 48 小時死亡率";
         const barRawData = latestMetrics.filter(d => d.indicator_name === mortalityName);
 
-        // Group by Dept and Average
         const deptBarMap = new Map<string, { sum: number; count: number }>();
         barRawData.forEach(item => {
             const current = deptBarMap.get(item.department) || { sum: 0, count: 0 };
@@ -139,7 +133,7 @@ export default async function DashboardPage(props: {
             value: count > 0 ? parseFloat((sum / count).toFixed(2)) : 0
         }));
 
-        // 7. Abnormal Items (from Latest Day)
+        // 9. Abnormal Items (Latest within filtered range)
         const abnormalItems = latestMetrics.filter((item) => item.status === "異常");
 
         return (
@@ -157,32 +151,33 @@ export default async function DashboardPage(props: {
                         <DashboardFilters
                             departments={departments}
                             doctors={doctors}
-                            defaultStartMonth={minMonthStr}
-                            defaultEndMonth={maxMonthStr}
+                            defaultStartDate={globalMinDateStr}
+                            defaultEndDate={globalMaxDateStr}
                         />
                     </div>
                 </div>
 
                 <div className="space-y-8">
-                    {/* Charts Section */}
+                    {/* TOP: KPI Table (Latest Day Metric) */}
+                    <div className="space-y-4">
+                        <KPITable items={latestMetrics} />
+                    </div>
+
+                    {/* MIDDLE: Charts Section */}
                     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
                         {/* Trend Chart (Left) - Uses Date Range Filter */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-4">
-                            <TrendChart data={trendData} title="指標趨勢 (依篩選區間)" />
+                            <TrendChart data={trendData} title="指標趨勢 (月統計)" />
                         </div>
 
                         {/* Bar Chart (Right) - Uses Latest Day */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-3">
-                            <DepartmentChart data={barChartData} title={`最新一日 (${maxDateStrFull}) 術後 48 小時死亡率`} />
+                            <DepartmentChart data={barChartData} title="最近一日 術後 48 小時死亡率" />
                         </div>
                     </div>
 
-                    {/* Tables Section (Bottom) - Latest Day Data */}
+                    {/* BOTTOM: Abnormal Table */}
                     <div className="space-y-4">
-                        {/* KPI Table (Latest Metrics) */}
-                        <KPITable items={latestMetrics} />
-
-                        {/* Abnormal Table */}
                         <AbnormalTable items={abnormalItems} />
                     </div>
                 </div>
