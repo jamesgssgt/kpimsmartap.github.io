@@ -161,7 +161,7 @@ export default async function DashboardPage(props: {
                 op_end: "",
                 abnormal_reason: ""
             };
-        }).sort((a, b) => a.department.localeCompare(b.department)); // Sort by Dept
+        }).sort((a, b) => b.value - a.value); // Sort by Value Desc
 
         // 7. Trend Chart Data (Group by Month - YYYY-MM)
         const trendMap = new Map<string, { sum: number; count: number }>();
