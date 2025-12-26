@@ -43,7 +43,7 @@ export function DepartmentChart({ data, title = "各科別指標數值" }: Depar
                             {data.map((entry, index) => (
                                 <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
                             ))}
-                            <LabelList dataKey="value" position="right" />
+                            <LabelList dataKey="value" position="right" formatter={(value: any) => `${value}%`} />
                         </Bar>
                     </BarChart>
                 </ResponsiveContainer>
