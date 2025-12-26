@@ -276,7 +276,7 @@ export default async function DashboardPage(props: {
 
                         {/* Bar Chart (Right) - Uses Latest Day */}
                         <div className="col-span-1 md:col-span-2 lg:col-span-3">
-                            <DepartmentChart data={barChartData} title="最近一月 術後 48 小時死亡率" />
+                            <DepartmentChart data={barChartData} title="最近一月依科別 術後 48 小時死亡率" />
                         </div>
                     </div>
                 </div>
