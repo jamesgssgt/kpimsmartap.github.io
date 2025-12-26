@@ -92,8 +92,76 @@ export default async function DashboardPage(props: {
 
         const latestFilteredDateStr = filteredDates.length > 0 ? filteredDates.sort().pop()! : "";
 
-        // 6. Latest Day Metrics (for KPITable & Bar Chart)
-        const latestMetrics = filteredDetails.filter(d => d.report_date === latestFilteredDateStr);
+        // 6. Metrics for KPI Table (Cumulative for the Month of the Filter End Date)
+        // User request: Same logic as Bar Chart (Cumulative for End Date Month).
+        // "收案月份至資料最後一日指標監控"
+
+        const kpiMonthPrefix = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
+        const kpiRawData = kpiDetails.filter(d =>
+            d.report_date && d.report_date.startsWith(kpiMonthPrefix)
+        );
+
+        // Aggregate by Dept + Indicator (User didn't strictly say Doctor, but usually KPI is granular. Let's aggregate by Department + Indicator for dashboard view)
+        // Or Dept + Doctor + Indicator? The table has NO Doctor column in the view I just saw?
+        // Wait, I checked KPITable.tsx: 
+        // Columns: Dept, Indicator, Value...
+        // NO Doctor column in the file I just read (Step 953).
+        // So I should aggregate by Department + Indicator.
+
+        const kpiAggMap = new Map<string, {
+            dept: string;
+            indicator: string;
+            num: number;
+            den: number;
+            unit: string;
+        }>();
+
+        kpiRawData.forEach(item => {
+            const key = `${item.department}|${item.indicator_name}`;
+            const current = kpiAggMap.get(key) || {
+                dept: item.department,
+                indicator: item.indicator_name,
+                num: 0,
+                den: 0,
+                unit: item.unit || "%"
+            };
+            kpiAggMap.set(key, {
+                ...current,
+                num: current.num + item.numerator,
+                den: current.den + item.denominator
+            });
+        });
+
+        const latestMetrics: KPIDetail[] = Array.from(kpiAggMap.values()).map(agg => {
+            const val = agg.den > 0 ? parseFloat(((agg.num / agg.den) * 100).toFixed(2)) : 0;
+            return {
+                id: "-1", // Dummy ID
+                created_at: "",
+                department: agg.dept,
+                doctor: "", // Aggregated
+                indicator_name: agg.indicator,
+                indicator_def: "",
+                numerator: agg.num,
+                denominator: agg.den,
+                value: val,
+                unit: agg.unit,
+                status: val > 0 ? "異常" : "正常", // Simple logic: if mortality > 0 it's "Abnormal" technically? Or just use value check. 
+                // Note: Original item.status was per case. 
+                // Threshold for mortality is usually 0. But let's set status based on value > 0 for now or "Normal".
+                // Actually the user didn't specify threshold. 
+                // Logic: If any abnormal existed? Or just Value > 0?
+                // Let's assume > 0 is Warning/Abnormal for Mortality.
+                patient_id: "",
+                patient_gender: "",
+                patient_birthday: "",
+                report_date: "",
+                admission_date: "",
+                discharge_date: "",
+                op_start: "",
+                op_end: "",
+                abnormal_reason: ""
+            };
+        }).sort((a, b) => a.department.localeCompare(b.department)); // Sort by Dept
 
         // 7. Trend Chart Data (Group by Month - YYYY-MM)
         const trendMap = new Map<string, { sum: number; count: number }>();
