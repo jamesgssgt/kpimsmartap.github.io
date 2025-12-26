@@ -10,14 +10,14 @@ export async function GET(request: NextRequest) {
     const error = searchParams.get("error");
 
     if (error) {
-        return NextResponse.json({ error: "Auth failed from server", details: error }, { status: 400 });
+        return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error)}&details=auth_failed`, request.url));
     }
 
     const cookieStore = await cookies();
     const storedState = cookieStore.get("smart_state")?.value;
 
     if (!state || state !== storedState) {
-        return NextResponse.json({ error: "Invalid state" }, { status: 400 });
+        return NextResponse.redirect(new URL("/login?error=invalid_state", request.url));
     }
 
     // Clear state cookie
@@ -51,7 +51,7 @@ export async function GET(request: NextRequest) {
     if (SMART_CONFIG.authType === "asymmetric") {
         // Asymmetric Authentication (Private Key JWT)
         if (!SMART_CONFIG.privateKey) {
-            return NextResponse.json({ error: "Configuration Error", details: "Missing privateKey for asymmetric auth" }, { status: 500 });
+            return NextResponse.redirect(new URL("/login?error=config_error&details=missing_private_key", request.url));
         }
 
         try {
@@ -73,7 +73,7 @@ export async function GET(request: NextRequest) {
             body.append("client_assertion", jwt);
 
         } catch (error) {
-            return NextResponse.json({ error: "Key Signing Error", details: String(error) }, { status: 500 });
+            return NextResponse.redirect(new URL(`/login?error=signing_error&details=${encodeURIComponent(String(error))}`, request.url));
         }
 
     } else {
@@ -93,7 +93,7 @@ export async function GET(request: NextRequest) {
         const tokenResponse = await res.json();
 
         if (!res.ok) {
-            return NextResponse.json({ error: "Token exchange failed", details: tokenResponse }, { status: 400 });
+            return NextResponse.redirect(new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(JSON.stringify(tokenResponse))}`, request.url));
         }
 
         // Success! We have the token.
@@ -128,6 +128,6 @@ export async function GET(request: NextRequest) {
         return NextResponse.redirect(new URL("/dashboard", request.url));
 
     } catch (e) {
-        return NextResponse.json({ error: "Token Request Error", details: String(e) }, { status: 500 });
+        return NextResponse.redirect(new URL(`/login?error=token_request_error&details=${encodeURIComponent(String(e))}`, request.url));
     }
 }
