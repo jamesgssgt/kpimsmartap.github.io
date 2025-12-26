@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -23,6 +23,14 @@ export default function LoginPage() {
         setIsLoading(true);
         window.location.href = "/api/auth/smart/launch";
     };
+
+    useEffect(() => {
+        // Validation transfer: If DefaultAuth=1, auto-redirect to SMART launch
+        if (process.env.NEXT_PUBLIC_DEFAULT_AUTH === "1") {
+            console.log("DefaultAuth=1 detected, auto-redirecting to SMART Launch...");
+            handleStandaloneLaunch();
+        }
+    }, []);
 
     const handleEmailLogin = async () => {
         if (!email || !password) {
