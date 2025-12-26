@@ -1,0 +1,5 @@
+pandas
+matplotlib
+fhirpy
+urllib3
+requests
