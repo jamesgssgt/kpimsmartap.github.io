@@ -1,6 +1,6 @@
 "use client";
 
-import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend } from "recharts";
+import { Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis, CartesianGrid, Legend, ReferenceLine } from "recharts";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 interface TrendData {
@@ -11,9 +11,11 @@ interface TrendData {
 interface TrendChartProps {
     data: TrendData[];
     title?: string;
+    upperLimit?: number;
+    lowerLimit?: number;
 }
 
-export function TrendChart({ data, title = "術後 48 小時死亡率 (Monthly)" }: TrendChartProps) {
+export function TrendChart({ data, title = "術後 48 小時死亡率 (Monthly)", upperLimit = 4.2, lowerLimit = 2.0 }: TrendChartProps) {
     return (
         <Card className="col-span-1 min-h-[350px]">
             <CardHeader>
@@ -21,7 +23,7 @@ export function TrendChart({ data, title = "術後 48 小時死亡率 (Monthly)"
             </CardHeader>
             <CardContent className="pl-2">
                 <ResponsiveContainer width="100%" height={300}>
-                    <LineChart data={data}>
+                    <LineChart data={data} margin={{ top: 10, right: 30, left: 20, bottom: 5 }}>
                         <CartesianGrid strokeDasharray="3 3" opacity={0.3} vertical={false} />
                         <XAxis
                             dataKey="date"
@@ -35,14 +37,32 @@ export function TrendChart({ data, title = "術後 48 小時死亡率 (Monthly)"
                             fontSize={12}
                             tickLine={false}
                             axisLine={false}
-                            tickFormatter={(value) => `${value}`}
-                            domain={[0, 6]} // Fixed domain for better visualization matching image
+                            tickFormatter={(value) => `${value}%`}
+                            domain={[0, 6]}
                         />
                         <Tooltip
-                            contentStyle={{ background: 'hsl(var(--background))', border: '1px solid hsl(var(--border))' }}
-                            labelStyle={{ color: 'hsl(var(--foreground))' }}
+                            formatter={(value: any) => [`${value}%`, "指標值"]}
+                            contentStyle={{ background: 'rgba(135, 206, 235, 0.2)', border: 'none', borderRadius: '4px' }}
+                            labelStyle={{ color: '#1f5f7e', fontWeight: 'bold' }}
+                            itemStyle={{ color: '#1f5f7e' }}
                         />
-                        <Legend />
+
+                        {/* Upper Limit (Dashed) */}
+                        <ReferenceLine
+                            y={upperLimit}
+                            stroke="#f97316" // Orange
+                            strokeDasharray="3 3"
+                            label={{ position: 'insideBottomRight', value: '上限', fill: '#f97316', fontSize: 12 }}
+                        />
+
+                        {/* Lower Limit (Dashed) */}
+                        <ReferenceLine
+                            y={lowerLimit}
+                            stroke="#22c55e" // Green
+                            strokeDasharray="3 3"
+                            label={{ position: 'insideBottomRight', value: '下限', fill: '#22c55e', fontSize: 12 }}
+                        />
+
                         {/* Main Indicator Line */}
                         <Line
                             type="monotone"
@@ -52,26 +72,6 @@ export function TrendChart({ data, title = "術後 48 小時死亡率 (Monthly)"
                             name="指標值"
                             activeDot={{ r: 8 }}
                             dot={{ r: 4 }}
-                        />
-                        {/* Upper Limit (Mock Data for Viz) */}
-                        <Line
-                            type="monotone"
-                            dataKey={() => 4.2} // Static value for viz
-                            stroke="#f97316" // Orange
-                            strokeWidth={2}
-                            name="上限"
-                            dot={false}
-                            activeDot={false}
-                        />
-                        {/* Lower Limit (Mock Data for Viz) */}
-                        <Line
-                            type="monotone"
-                            dataKey={() => 2.0} // Static value for viz
-                            stroke="#22c55e" // Green
-                            strokeWidth={2}
-                            name="下限"
-                            dot={false}
-                            activeDot={false}
                         />
                     </LineChart>
                 </ResponsiveContainer>

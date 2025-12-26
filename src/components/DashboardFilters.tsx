@@ -10,9 +10,18 @@ interface DashboardFiltersProps {
     doctors: { name: string; dept: string }[];
     defaultStartDate?: string;
     defaultEndDate?: string;
+    showDeptFilter?: boolean;
+    showDoctorFilter?: boolean;
 }
 
-export function DashboardFilters({ departments, doctors, defaultStartDate, defaultEndDate }: DashboardFiltersProps) {
+export function DashboardFilters({
+    departments,
+    doctors,
+    defaultStartDate,
+    defaultEndDate,
+    showDeptFilter = true,
+    showDoctorFilter = true
+}: DashboardFiltersProps) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
@@ -128,28 +137,32 @@ export function DashboardFilters({ departments, doctors, defaultStartDate, defau
                     />
                 </div>
 
-                <div className="flex items-center gap-2">
-                    <span className="font-medium whitespace-nowrap">科別：</span>
-                    <div className="w-[200px]">
-                        <MultiSelect
-                            options={deptOptions}
-                            selected={selectedDepts}
-                            onChange={handleDeptChange}
-                            placeholder="篩選科別..."
-                        />
+                {showDeptFilter && (
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium whitespace-nowrap">科別：</span>
+                        <div className="w-[200px]">
+                            <MultiSelect
+                                options={deptOptions}
+                                selected={selectedDepts}
+                                onChange={handleDeptChange}
+                                placeholder="篩選科別..."
+                            />
+                        </div>
                     </div>
-                </div>
-                <div className="flex items-center gap-2">
-                    <span className="font-medium whitespace-nowrap">醫師：</span>
-                    <div className="w-[200px]">
-                        <MultiSelect
-                            options={doctorOptions}
-                            selected={selectedDoctors}
-                            onChange={handleDoctorChange}
-                            placeholder="篩選醫師..."
-                        />
+                )}
+                {showDoctorFilter && (
+                    <div className="flex items-center gap-2">
+                        <span className="font-medium whitespace-nowrap">醫師：</span>
+                        <div className="w-[200px]">
+                            <MultiSelect
+                                options={doctorOptions}
+                                selected={selectedDoctors}
+                                onChange={handleDoctorChange}
+                                placeholder="篩選醫師..."
+                            />
+                        </div>
                     </div>
-                </div>
+                )}
 
                 {(selectedDepts.length > 0 || selectedDoctors.length > 0 || startDate || endDate) && (
                     <button

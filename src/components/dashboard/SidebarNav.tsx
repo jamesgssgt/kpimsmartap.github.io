@@ -9,7 +9,7 @@ export function SidebarNav() {
 
     const links = [
         { href: "/dashboard", label: "Dashboard", exact: true },
-        { href: "#", label: "My Favorites" },
+        { href: "/favorites", label: "My Favorites", exact: true },
         { href: "#", label: "Messages" },
         { href: "/dashboard/settings", label: "Settings" },
     ];
