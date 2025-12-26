@@ -5,6 +5,8 @@ import React, { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { createClient } from "@/utils/supabase/client";
 
+import { getCookie } from "@/utils/cookie";
+
 export default function SmartLoader({ children }: { children: React.ReactNode }) {
 
     const [error, setError] = useState<Error | null>(null);
@@ -15,12 +17,27 @@ export default function SmartLoader({ children }: { children: React.ReactNode })
         const checkSession = async () => {
             const supabase = createClient();
             const { data: { session } } = await supabase.auth.getSession();
+
             if (session) {
                 setIsSupabaseAuthenticated(true);
             } else {
-                // Determine if we need to redirect or if we are waiting for a server-side auth cookie.
-                // Since this is a hybrid app, if we have no Supabase session, we prompt login.
-                // The DashboardLayout wraps everything, so we must be authenticated.
+                // Check for DefaultAuth=1 (OAuth2/SMART)
+                const defaultAuth = process.env.NEXT_PUBLIC_DEFAULT_AUTH;
+                const smartAuthCookie = await getCookie("smart_authenticated");
+
+                if (defaultAuth === "1" && smartAuthCookie === "1") {
+                    console.log("SMART Auth detected, signing in anonymously to Supabase...");
+                    const { error: anonError } = await supabase.auth.signInAnonymously();
+                    if (!anonError) {
+                        setIsSupabaseAuthenticated(true);
+                        return;
+                    } else {
+                        console.error("Anonymous login failed:", anonError);
+                        // Fall through to redirect
+                    }
+                }
+
+                // Normal flow: Redirect to login
                 router.push("/login");
             }
         };

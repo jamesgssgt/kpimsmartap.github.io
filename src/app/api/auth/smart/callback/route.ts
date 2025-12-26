@@ -117,6 +117,14 @@ export async function GET(request: NextRequest) {
             });
         }
 
+        // Set a visible cookie for client-side to assume we are authenticated via SMART
+        // This allows SmartLoader to trigger anonymous login if needed
+        cookieStore.set("smart_authenticated", "1", {
+            httpOnly: false, // Accessible by JS
+            secure: process.env.NODE_ENV === "production",
+            path: "/"
+        });
+
         return NextResponse.redirect(new URL("/dashboard", request.url));
 
     } catch (e) {
