@@ -27,16 +27,29 @@ export function DashboardFilters({ departments, doctors, defaultStartDate, defau
     const [startDate, setStartDate] = React.useState(searchParams.get("startDate") || defaultStartDate || "");
     const [endDate, setEndDate] = React.useState(searchParams.get("endDate") || defaultEndDate || "");
 
+    const isInitialized = React.useRef(false);
+
     // FIX: Sync local state when URL params change externally
     React.useEffect(() => {
         const urlDepts = searchParams.get("dept")?.split(",").filter(Boolean) || [];
         const urlDoctors = searchParams.get("doctor")?.split(",").filter(Boolean) || [];
 
-        // If URL param is missing (null), fallback to default prop. 
-        // Use ?? operator to distinguish between missing (null) and empty string (if logic allowed empty string).
-        // Since get() returns null if missing, and we want default in that case.
-        const urlStart = searchParams.get("startDate") ?? defaultStartDate ?? "";
-        const urlEnd = searchParams.get("endDate") ?? defaultEndDate ?? "";
+        // Remove fallback to default props here. 
+        // If param is missing, it's empty string (Clear action or Back button to empty).
+        const urlStart = searchParams.get("startDate") || "";
+        const urlEnd = searchParams.get("endDate") || "";
+
+        // Protect initial default state from being wiped by empty URL on first load
+        if (!isInitialized.current) {
+            isInitialized.current = true;
+            // If URL is completely empty associated to dates, keep the default state (from useState)
+            if (!searchParams.has("startDate") && !searchParams.has("endDate")) {
+                // However, we MUST sync other params like Dept/Doctor if they exist
+                if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
+                setSelectedDoctors(urlDoctors);
+                return;
+            }
+        }
 
         if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
         setSelectedDoctors(urlDoctors);
@@ -44,7 +57,7 @@ export function DashboardFilters({ departments, doctors, defaultStartDate, defau
         // Only update if different to avoid loops, but ensure we respect default if URL is empty
         if (urlStart !== startDate) setStartDate(urlStart);
         if (urlEnd !== endDate) setEndDate(urlEnd);
-    }, [searchParams, defaultStartDate, defaultEndDate]);
+    }, [searchParams]);
 
     // Sync state with URL
     React.useEffect(() => {
