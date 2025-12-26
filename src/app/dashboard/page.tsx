@@ -263,7 +263,7 @@ export default async function DashboardPage(props: {
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標儀表板] 收案月份至資料最後一日指標監控 (${latestFilteredDateStr || "無資料"})`}
+                            title={`[指標監控] 月監控資料最後一日指標監控 (${latestFilteredDateStr ? latestFilteredDateStr.split('T')[0] : "無資料"})`}
                         />
                     </div>
 
