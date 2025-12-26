@@ -115,23 +115,48 @@ export default async function DashboardPage(props: {
             }))
             .sort((a, b) => a.date.localeCompare(b.date));
 
-        // 8. Bar Chart Data (Latest Day within filtered range)
-        const mortalityName = "術後 48 小時死亡率";
-        const barRawData = latestMetrics.filter(d => d.indicator_name === mortalityName);
+        // 8. Bar Chart Data (Cumulative for the Month of the Filter End Date)
+        // User request: "Recently Month" -> The month of the 'End Date'.
+        // Sort: High to Low.
 
-        const deptBarMap = new Map<string, { sum: number; count: number }>();
+        const targetDateForBar = endDate || globalMaxDateStr;
+        const barMonthPrefix = targetDateForBar ? targetDateForBar.substring(0, 7) : ""; // YYYY-MM
+
+        const mortalityName = "術後48小時死亡率"; // Note: DB value is usually without spaces? Checking Generate Data: "術後48小時死亡率" (no spaces)
+        // Wait, Generate Data code says: "術後48小時死亡率"
+        // But previous code said: "術後 48 小時死亡率" (with spaces). 
+        // Let's match flexible or check data. 
+        // generate-data.ts Line 266: indicator_name: "術後48小時死亡率"
+        // DashboardPage.tsx Line 119: const mortalityName = "術後 48 小時死亡率";
+        // This mismatch might explain empty charts before? Or maybe I misread.
+        // I will use "術後48小時死亡率" to match generate-data.ts, but standardizing is better.
+        // Let's assume generate-data.ts is the source of truth for NEW data.
+
+        // Filter filteredDetails (which is strictly range filtered)? 
+        // User said: "迄日當月的累計值". 
+        // If the range selected is small (e.g. 1 day), we might miss the rest of the month if we use filteredDetails.
+        // We should probably use the FULL 'kpiDetails' (base filtered by dept/doctor) and filter by Month Prefix of EndDate.
+
+        const barRawData = kpiDetails.filter(d =>
+            d.indicator_name.replace(/\s/g, "") === "術後48小時死亡率" && // Normalize spaces
+            d.report_date && d.report_date.startsWith(barMonthPrefix)
+        );
+
+        const deptBarMap = new Map<string, { num: number; den: number }>();
         barRawData.forEach(item => {
-            const current = deptBarMap.get(item.department) || { sum: 0, count: 0 };
+            const current = deptBarMap.get(item.department) || { num: 0, den: 0 };
             deptBarMap.set(item.department, {
-                sum: current.sum + item.value,
-                count: current.count + 1
+                num: current.num + item.numerator,
+                den: current.den + item.denominator
             });
         });
 
-        const barChartData = Array.from(deptBarMap.entries()).map(([department, { sum, count }]) => ({
-            department,
-            value: count > 0 ? parseFloat((sum / count).toFixed(2)) : 0
-        }));
+        const barChartData = Array.from(deptBarMap.entries())
+            .map(([department, { num, den }]) => ({
+                department,
+                value: den > 0 ? parseFloat(((num / den) * 100).toFixed(2)) : 0
+            }))
+            .sort((a, b) => b.value - a.value); // Descending Sort
 
         // 9. Abnormal Items (Latest within filtered range)
         const abnormalItems = latestMetrics.filter((item) => item.status === "異常");
