@@ -18,8 +18,8 @@ export async function GET(request: NextRequest) {
     const params = new URLSearchParams({
         response_type: "code",
         client_id: SMART_CONFIG.clientId,
-        scope: SMART_CONFIG.scope,
-        redirect_uri: SMART_CONFIG.redirectUri,
+        // Use dynamic redirect URI based on the current request origin (supports Vercel Preview/Production)
+        redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
         aud: iss,
         state: state,
     });

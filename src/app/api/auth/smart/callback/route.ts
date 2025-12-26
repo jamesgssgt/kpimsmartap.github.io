@@ -39,7 +39,8 @@ export async function GET(request: NextRequest) {
     const body = new URLSearchParams({
         grant_type: "authorization_code",
         code: code!,
-        redirect_uri: SMART_CONFIG.redirectUri,
+        // Use dynamic redirect URI to match the one sent in the launch request
+        redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
         // client_id: SMART_CONFIG.clientId, // If using Basic Auth, id is in header usually, but some require both
     });
 
