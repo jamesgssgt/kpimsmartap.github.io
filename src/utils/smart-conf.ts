@@ -1,6 +1,6 @@
 export const SMART_CONFIG = {
     // In a real app, these should be environment variables
-    clientId: process.env.SMART_CLIENT_ID || "my-client-id",
+    clientId: process.env.SMART_CLIENT_ID || "my-postop-app",
 
     // Auth Type: 'symmetric' (Client Secret) or 'asymmetric' (Private Key JWT)
     authType: (process.env.SMART_AUTH_TYPE as 'symmetric' | 'asymmetric') || 'symmetric',
@@ -16,8 +16,8 @@ export const SMART_CONFIG = {
     // Algorithm to sign the JWT (usually RS384 or ES384 for FHIR, but RS256 is common default)
     signingAlg: process.env.SMART_SIGNING_ALG || "RS384",
 
-    iss: process.env.SMART_ISS || "https://launch.smarthealthit.org/v/r4/fhir",
-    scope: process.env.SMART_SCOPE || "patient/Patient.read patient/Observation.read launch online_access openid profile",
+    iss: process.env.SMART_ISS || "https://hapi.fhir.tw",
+    scope: process.env.SMART_SCOPE || "launch patient/Encounter.rs patient/Patient.read openid profile",
 
     redirectUri: typeof window !== "undefined"
         ? window.location.origin + "/api/auth/smart/callback"

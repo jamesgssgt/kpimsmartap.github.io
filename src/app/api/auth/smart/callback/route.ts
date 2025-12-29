@@ -21,8 +21,11 @@ export async function GET(request: NextRequest) {
     }
 
     // Clear state cookie
-    // Clear state cookie
     cookieStore.delete("smart_state");
+
+    // PKCE: Get code_verifier
+    const codeVerifier = cookieStore.get("smart_code_verifier")?.value;
+    cookieStore.delete("smart_code_verifier");
 
     // Exchange Code
     const storedIss = cookieStore.get("smart_iss")?.value;
@@ -43,6 +46,10 @@ export async function GET(request: NextRequest) {
         redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
         // client_id: SMART_CONFIG.clientId, // If using Basic Auth, id is in header usually, but some require both
     });
+
+    if (codeVerifier) {
+        body.append("code_verifier", codeVerifier);
+    }
 
     const headers: HeadersInit = {
         "Content-Type": "application/x-www-form-urlencoded",
