@@ -36,13 +36,21 @@ export default async function FavoritesPage(props: {
         }
 
         // --- ACCOUNT MAPPING LOGIC ---
-        // Joseph -> 李醫師
         let targetDoctor = "";
-        if (user.email === "joseph@kpim.com") {
-            targetDoctor = "李醫師";
-        } else {
-            // Fallback or handle other users
-            // For now, if not joseph, maybe show nothing or generic
+
+        // 1. Try DB Preference
+        const { data: favData } = await supabase.from("favorites").select("doctor").eq("user_id", user.id).single();
+        if (favData) {
+            targetDoctor = favData.doctor;
+        }
+
+        // 2. Fallback Hardcoded Mapping
+        if (!targetDoctor) {
+            if (user.email === "joseph@kpim.com") {
+                targetDoctor = "李醫師";
+            } else if (user.email === "user_test@kpim.com") {
+                targetDoctor = "劉醫師";
+            }
         }
 
         // Fetch Data
