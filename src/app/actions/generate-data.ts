@@ -160,6 +160,10 @@ export async function generateData() {
             opStart.setHours(randomInt(8, 16));
             opStart.setMinutes(randomInt(0, 59));
 
+            // Per Definition: Count from Anesthesia Start
+            // Assume Anesthesia starts ~30 mins before Op Start
+            const anesthesiaStart = new Date(opStart.getTime() - 30 * 60 * 1000);
+
             const opEnd = new Date(opStart.getTime() + randomInt(60, 240) * 60 * 1000);
             const admissionDate = new Date(opStart.getTime() - randomInt(1, 2) * 24 * 60 * 60 * 1000);
             const dischargeDate = new Date(opEnd.getTime() + randomInt(2, 10) * 24 * 60 * 60 * 1000);
@@ -172,16 +176,8 @@ export async function generateData() {
                 const randomSel = randomChoice(allDepts);
                 chosenDeptObj = randomSel.deptInfo;
                 hCode = randomSel.hospCode;
-            } else {
-                // Find hosp code for specific dept? (Not strictly needed for logic below if we have the object)
-                // We need hCode for risk calculation if we want to follow original logic, 
-                // but simpler is to just use the object.
-                // Let's assume specificDept passed is from allDepts structure if possible, 
-                // or we just look it up.
-                // For the loop 'allDepts', we have hCode.
             }
 
-            // Re-find hData if needed for risk - simplifying risk for this forced generation
             // Risk logic
             let isBad = false;
             if (forceAbnormal) {
@@ -191,16 +187,39 @@ export async function generateData() {
                 isBad = Math.random() < 0.02;
             }
 
+            let isNumerator = false; // KPI Numerator hit
             let isDeceased = false;
             let abnormalReason = null;
             let deathTime = null;
+            let dischargeDispositionCode = "home"; // default
 
             if (isBad) {
-                deathTime = new Date(opEnd.getTime() + randomInt(2, 46) * 60 * 60 * 1000);
-                isDeceased = true;
-                abnormalReason = "術後48小時內死亡";
-                // FIX: If deceased, Discharge Date is Death Time
-                dischargeDate.setTime(deathTime.getTime());
+                // Determine Scenario: 
+                // 1. In-Hospital Death within 48h of Anesthesia
+                // 2. Critical AAD (Against Advice Discharge) within 48h of Anesthesia
+
+                const isAAD = Math.random() < 0.3; // 30% chance AAD scenario
+
+                // Time limits: Must be within 48h of Anesthesia Start
+                const hoursPostAnes = randomInt(2, 46); // 2 to 46 hours
+                const eventTime = new Date(anesthesiaStart.getTime() + hoursPostAnes * 60 * 60 * 1000);
+
+                // Ensure event happened after Op End? Not necessarily, could die during op, but for simplicity assume post-op or peri-op.
+                // KPI says "Post-op 48h mortality" usually implies post-op, but definition says "within 48h of anesthesia".
+                // We'll treat eventTime as the "End Point".
+
+                dischargeDate.setTime(eventTime.getTime());
+                isNumerator = true;
+
+                if (isAAD) {
+                    abnormalReason = "病危自動出院(AAD) - 麻醉後48小時內";
+                    dischargeDispositionCode = "aadvice"; // Left against advice
+                } else {
+                    isDeceased = true;
+                    deathTime = eventTime;
+                    abnormalReason = "術後48小時內院內死亡";
+                    dischargeDispositionCode = "exp"; // Expired
+                }
             }
 
             // Decorate Data
@@ -219,7 +238,6 @@ export async function generateData() {
             birthDate.setDate(randomInt(1, 28));
             const birthDateStr = birthDate.toISOString().split('T')[0];
 
-            // ... Saving FHIR resources
             await fhirSave("Patient", {
                 resourceType: "Patient",
                 id: patId,
@@ -233,49 +251,77 @@ export async function generateData() {
                 resourceType: "Encounter",
                 id: encId,
                 status: "finished",
-                class: { code: "IMP" },
+                class: { code: "IMP" }, // Inpatient
                 subject: { reference: `Patient/${patId}` },
                 serviceProvider: { reference: `Organization/${chosenDeptObj.org_id}`, display: chosenDeptObj.org_name },
-                hospitalization: isBad ? { dischargeDisposition: { coding: [{ code: "exp" }] } } : undefined
+                hospitalization: {
+                    dischargeDisposition: { coding: [{ code: dischargeDispositionCode }] }
+                },
+                period: {
+                    start: admissionDate.toISOString(),
+                    end: dischargeDate.toISOString()
+                }
             });
 
             const procId = getLongId();
+            const icdCodes = [
+                { code: "0B110Z4", display: "Dilatation of Trachea" },
+                { code: "021009W", display: "Bypass Coronary Artery, One Site" },
+                { code: "0DTJ0ZZ", display: "Resection of Appendix" },
+                { code: "0SRC0J9", display: "Replacement of Right Knee Joint" },
+                { code: "0TY00Z0", display: "Transplantation of Right Kidney, Allogeneic" },
+                { code: "0FB03ZZ", display: "Excision of Liver, Percutaneous" },
+                { code: "0SG10Z1", display: "Fusion of Lumbar Vertebral Joint" },
+                { code: "047K04Z", display: "Dilation of Right Femoral Artery" },
+                { code: "0HQ9XZZ", display: "Repair of Skin, External" },
+                { code: "0W9B3ZZ", display: "Drainage of Right Pleural Cavity" }
+            ];
+            const selectedIcd = randomChoice(icdCodes);
+
             await fhirSave("Procedure", {
                 resourceType: "Procedure",
                 id: procId,
                 status: "completed",
                 subject: { reference: `Patient/${patId}` },
                 encounter: { reference: `Encounter/${encId}` },
-                performedPeriod: { end: opEnd.toISOString() },
-                code: { coding: [{ display: "Surgery" }] },
+                performedPeriod: {
+                    start: opStart.toISOString(),
+                    end: opEnd.toISOString()
+                },
+                code: {
+                    coding: [{
+                        system: "http://hl7.org/fhir/sid/icd-10-pcs",
+                        code: selectedIcd.code,
+                        display: selectedIcd.display
+                    }]
+                },
+                // Add ASA info as extension or observation if strict, but ignoring for mock
                 performer: [{ actor: { reference: `Practitioner/${docId}` } }]
             });
 
-            // Report Date Logic: 
-            // Updated Request: Report calculated by Surgery Completion Date (Cohort Method)
+            // Report Date Logic: Surgery Completion Date
             const reportDate = opEnd.toISOString();
 
             return {
                 department: deptName,
                 doctor: docName,
                 indicator_name: "術後48小時死亡率",
-                indicator_def: "手術後死亡人數 / 手術總次數",
-                numerator: isDeceased ? 1 : 0,
+                indicator_def: "麻醉開始後48小時內死亡(含AAD)",
+                numerator: isNumerator ? 1 : 0,
                 denominator: 1,
-                value: isDeceased ? 1 : 0,
+                value: isNumerator ? 1 : 0,
                 patient_id: patId,
                 patient_gender: gender,
                 patient_birthday: birthDateStr,
-                status: isDeceased ? "異常" : "正常",
+                status: isNumerator ? "異常" : "正常",
                 unit: "%",
                 report_date: reportDate,
                 admission_date: admissionDate.toISOString(),
                 discharge_date: dischargeDate.toISOString(),
-                // NEW: Surgery Execution Times
                 op_start: opStart.toISOString(),
                 op_end: opEnd.toISOString(),
                 abnormal_reason: abnormalReason,
-                monthKey: opStart.toISOString().substring(0, 7) // for tracking
+                monthKey: opStart.toISOString().substring(0, 7)
             };
         };
 
@@ -316,36 +362,8 @@ export async function generateData() {
 
         // 2. Abnormal Filling
         const abnormalPromises = [];
-        // Identify months we covered
-        const coveredMonths = new Set(generatedItems.map(i => i.monthKey));
-
-        for (const m of Array.from(coveredMonths)) {
-            const currentCount = abnormalCounts[m] || 0;
-            if (currentCount < 10) {
-                const needed = 10 - currentCount;
-                for (let k = 0; k < needed; k++) {
-                    // Find a random day in this month?
-                    // Simplified: just pick a random dayIndex that maps to this month?
-                    // Easier: Iterative check or just pick random days until we hit the month.
-                    // Or reuse createCase with a specific dayIndex?
-                    // We need to reverse map Month -> DayIndex ranges.
-                    // Since dayIndex 0 = Nov 20, DayIndex inc = Date dec.
-                    // We can just pick a random dayIndex roughly.
-                    // OR: simpler, just pass a flag to createCase to "pick a day in this month".
-                    // But createCase takes dayIndex.
-                    // Let's just generate random dayIndices (0..100) until we find appropriate month?
-
-                    // Actually, let's just create a new helper or pick a valid dayIndex.
-                    // Month M (e.g. 2025-11).
-                    // We iterate 0..100. Calculate month. If match, use it.
-                    // Optimization: Pre-map dayIndex to Month.
-                }
-            }
-        }
-
-        // Refined Abnormal Filling Strategy:
-        // We know dayIndex 0 is Nov 20. 
-        // We can just iterate available dayIndices, group by Month.
+        // Ensure at least 10 abnormal cases per month
+        // Map Days to Months for accurate backfilling
         const daysByMonth: Record<string, number[]> = {};
         for (let d = 0; d < daysBack; d++) {
             const now = new Date("2025-11-20T23:59:59");
