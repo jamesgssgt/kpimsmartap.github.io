@@ -64,6 +64,7 @@ function LoginContent() {
         }
 
         const defaultAuth = process.env.NEXT_PUBLIC_DEFAULT_AUTH;
+        console.log("Debug: NEXT_PUBLIC_DEFAULT_AUTH =", defaultAuth);
 
         if (defaultAuth === "1") {
             // Auto-mode: Show loading and redirect

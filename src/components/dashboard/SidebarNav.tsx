@@ -10,6 +10,7 @@ export function SidebarNav() {
     const links = [
         { href: "/dashboard", label: "Dashboard", exact: true },
         { href: "/favorites", label: "My Favorites", exact: true },
+        { href: "/settings/measure-builder", label: "指標設定 (Builder)" },
         { href: "#", label: "Messages" },
         { href: "/dashboard/settings", label: "Settings" },
     ];

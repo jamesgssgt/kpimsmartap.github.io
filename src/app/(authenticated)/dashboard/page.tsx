@@ -291,6 +291,15 @@ export default async function DashboardPage(props: {
         );
 
     } catch (error) {
+        // Next.js uses errors for redirects. We need to rethrow it.
+        if (error instanceof Error && error.message === "NEXT_REDIRECT") {
+            throw error;
+        }
+        // Check for digest property which newer Next.js versions might use or specific code
+        if ((error as any)?.digest?.startsWith?.('NEXT_REDIRECT')) {
+            throw error;
+        }
+
         console.error("Dashboard Page Error:", error);
         return (
             <div className="p-8 text-center">

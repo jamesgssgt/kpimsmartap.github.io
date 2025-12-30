@@ -248,6 +248,14 @@ export default async function FavoritesPage(props: {
         );
 
     } catch (error) {
+        // Next.js uses errors for redirects. We need to rethrow it.
+        if (error instanceof Error && error.message === "NEXT_REDIRECT") {
+            throw error;
+        }
+        if ((error as any)?.digest?.startsWith?.('NEXT_REDIRECT')) {
+            throw error;
+        }
+
         console.error("Favorites Page Error:", error);
         return (
             <div className="p-8 text-center">
