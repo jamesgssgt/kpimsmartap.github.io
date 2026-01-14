@@ -19,6 +19,8 @@ interface KPITableProps {
     items: KPIDetail[];
     title?: string;
     viewType?: "department" | "doctor" | "none" | "date-ranking";
+    numeratorLabel?: string;
+    denominatorLabel?: string;
 }
 
 function DrillDownTooltip({ children, content }: { children: React.ReactNode; content: React.ReactNode }) {
@@ -69,7 +71,7 @@ function DrillDownTooltip({ children, content }: { children: React.ReactNode; co
     );
 }
 
-export function KPITable({ items, title, viewType = "department" }: KPITableProps & { viewType?: "department" | "doctor" | "none" | "date-ranking" }) {
+export function KPITable({ items, title, viewType = "department", numeratorLabel = "分子", denominatorLabel = "分母" }: KPITableProps) {
     const searchParams = useSearchParams();
     // Helper to preserve other params (like dates) when adding dept query
     const createQueryString = (name: string, value: string) => {
@@ -107,8 +109,8 @@ export function KPITable({ items, title, viewType = "department" }: KPITableProp
                                 </TableHead>
                             )}
                             <TableHead className="text-white font-bold w-[15%]">指標值</TableHead>
-                            <TableHead className="text-white font-bold w-[42%] whitespace-nowrap">分子(術後 48 小時死亡人次)</TableHead>
-                            <TableHead className="text-white font-bold w-[20%] whitespace-nowrap">分母(手術人次)</TableHead>
+                            <TableHead className="text-white font-bold w-[42%] whitespace-nowrap">{numeratorLabel}</TableHead>
+                            <TableHead className="text-white font-bold w-[20%] whitespace-nowrap">{denominatorLabel}</TableHead>
                             <TableHead className="text-white font-bold w-[8%]">燈號</TableHead>
                         </TableRow>
                     </TableHeader>

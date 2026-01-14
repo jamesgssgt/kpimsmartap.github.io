@@ -1,27 +1,42 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
+import { SMART_CONFIG } from "@/utils/smart-conf";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 import { DataGenerator } from "@/components/DataGenerator";
+import { useSettings } from "@/contexts/SettingsContext";
 
 import { syncFhirData } from "@/app/actions/sync-data";
 
 export default function SettingsPage() {
-    const [fhirUrl, setFhirUrl] = useState("https://launch.smarthealthit.org/v/r4/fhir");
+    const [fhirUrl, setFhirUrl] = useState(SMART_CONFIG.iss);
     const [loading, setLoading] = useState(false);
+    const [saved, setSaved] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    const { enableAi, setEnableAi } = useSettings();
+
+    // Load from LocalStorage on mount
+    useEffect(() => {
+        const stored = localStorage.getItem("KPIM_FHIR_URL");
+        if (stored) {
+            setFhirUrl(stored);
+        }
+    }, []);
 
     const handleSave = () => {
         setLoading(true);
-        // Simulate save - in a real app this might save to env, db, or local storage for client-side init
-        console.log("Saving FHIR URL:", fhirUrl);
+        localStorage.setItem("KPIM_FHIR_URL", fhirUrl);
+
+        // Simulate network delay
         setTimeout(() => {
             setLoading(false);
-            alert("Settings saved (Simulated)");
-        }, 800);
+            setSaved(true);
+            setTimeout(() => setSaved(false), 2000);
+        }, 500);
     };
 
     const handleSync = async () => {
@@ -41,8 +56,28 @@ export default function SettingsPage() {
     };
 
     return (
-        <div className="space-y-6">
+        <div className="space-y-6 p-6 md:p-12">
             <h2 className="text-3xl font-bold tracking-tight">設定</h2>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>AI 智慧建議設定</CardTitle>
+                    <CardDescription>
+                        控制是否啟用系統中的 AI 輔助功能，包含指標建議、代碼生成與對話助手。
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between space-x-2">
+                        <Label htmlFor="ai-mode" className="flex flex-col space-y-1">
+                            <span>啟用 AI 智慧建議</span>
+                            <span className="font-normal text-[0.8rem] text-muted-foreground">
+                                若關閉，所有 AI 相關按鈕與對話助手將被隱藏。
+                            </span>
+                        </Label>
+                        <Switch id="ai-mode" checked={enableAi} onCheckedChange={setEnableAi} />
+                    </div>
+                </CardContent>
+            </Card>
 
             <Card>
                 <CardHeader>
@@ -65,7 +100,7 @@ export default function SettingsPage() {
                         </p>
                     </div>
                     <Button onClick={handleSave} disabled={loading}>
-                        {loading ? "儲存中..." : "儲存設定"}
+                        {loading ? "儲存中..." : saved ? "已儲存！" : "儲存設定"}
                     </Button>
                 </CardContent>
             </Card>
@@ -85,14 +120,14 @@ export default function SettingsPage() {
 
                 <Card>
                     <CardHeader>
-                        <CardTitle>FHIR 同步</CardTitle>
+                        <CardTitle>FHIR 同步與計算</CardTitle>
                         <CardDescription>
-                            手動觸發與已設定的 FHIR 伺服器同步。
+                            手動觸發 FHIR 同步並依定義計算指標。
                         </CardDescription>
                     </CardHeader>
                     <CardContent>
                         <Button variant="outline" onClick={handleSync} disabled={syncing}>
-                            {syncing ? "同步中..." : "與 FHIR 伺服器同步"}
+                            {syncing ? "處理中..." : "同步與計算指標"}
                         </Button>
                     </CardContent>
                 </Card>

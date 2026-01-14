@@ -6,13 +6,15 @@ import { DepartmentChart } from "@/components/dashboard/DepartmentChart";
 import { AbnormalTable } from "@/components/dashboard/AbnormalTable";
 import { DashboardFilters } from "@/components/DashboardFilters";
 import { SignOutButton } from "@/components/SignOutButton";
+import { DashboardTabs } from "@/components/dashboard/DashboardTabs";
 import { KPIItem, KPIDetail } from "@/types/dashboard";
+
 
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
 export default async function DashboardPage(props: {
-    searchParams: Promise<{ dept?: string; doctor?: string; startDate?: string; endDate?: string }>;
+    searchParams: Promise<{ dept?: string; doctor?: string; startDate?: string; endDate?: string; kpi?: string }>;
 }) {
     try {
         const searchParams = await props.searchParams;
@@ -27,6 +29,7 @@ export default async function DashboardPage(props: {
         const doctorParam = getParam(searchParams?.doctor);
         const startDate = getParam(searchParams?.startDate);
         const endDate = getParam(searchParams?.endDate);
+        const kpiParam = getParam(searchParams?.kpi);
 
         const deptFilterStr = deptParam ? decodeURIComponent(deptParam) : undefined;
         const doctorFilterStr = doctorParam ? decodeURIComponent(doctorParam) : undefined;
@@ -41,12 +44,86 @@ export default async function DashboardPage(props: {
             return redirect("/login");
         }
 
-        // Fetch KPI Summary (Used for filter lists)
+        // Fetch KPI Summary (Small table, used for filter lists)
         const { data: kpiDataRaw } = await supabase.from("KPI").select("*");
-        const { data: detailDataRaw } = await supabase.from("KPI_Detail").select("*");
+
+        // Fetch Pinned Indicators
+        const { data: pinnedDefs } = await supabase
+            .from("kpi_definitions")
+            .select("name, numerator_name, denominator_name")
+            .eq("is_pinned", true)
+            .order("name", { ascending: true });
+
+        // Fetch ALL definitions for target lookup
+        const { data: allDefs } = await supabase
+            .from("kpi_definitions")
+            .select("name, target_value, target_operator");
+
+        const targetMap = new Map(allDefs?.map(d => [d.name, { val: d.target_value, op: d.target_operator }]));
+
+        let pinnedNames = pinnedDefs?.map(d => d.name) || [];
+        let primaryIndicatorName = "";
+        let numeratorLabel = "分子(術後 48 小時死亡人次)";
+        let denominatorLabel = "分母(手術人次)";
+
+        // 1. Determine Primary Indicator & Labels
+        if (pinnedNames.length > 0) {
+            // Pinned: Default to first, allow override by URL param
+            primaryIndicatorName = pinnedNames[0];
+            let activeDef = pinnedDefs![0];
+
+            if (kpiParam && pinnedNames.includes(decodeURIComponent(kpiParam))) {
+                primaryIndicatorName = decodeURIComponent(kpiParam);
+                activeDef = pinnedDefs?.find(d => d.name === primaryIndicatorName) || activeDef;
+            }
+
+            numeratorLabel = activeDef.numerator_name || "分子";
+            denominatorLabel = activeDef.denominator_name || "分母";
+        } else {
+            // Not Pinned: Fallback to first alphabetical in DB
+            const { data: firstDef } = await supabase
+                .from("kpi_definitions")
+                .select("name, numerator_name, denominator_name")
+                .order("name", { ascending: true })
+                .limit(1)
+                .single();
+
+            if (firstDef) {
+                primaryIndicatorName = firstDef.name;
+                numeratorLabel = firstDef.numerator_name || "分子";
+                denominatorLabel = firstDef.denominator_name || "分母";
+            } else {
+                primaryIndicatorName = "手術後 48 小時內死亡率"; // Ultimate fallback
+            }
+
+            // If URL param exists (even if not pinned), try to honor it (simple override)
+            if (kpiParam) {
+                primaryIndicatorName = decodeURIComponent(kpiParam);
+            }
+        }
+
+        // Fetch KPI Details - Filtered SERVER SIDE by Primary Indicator to avoid 1000 row limit
+        // We trim the primary indicator name just in case, but usually DB match is exact. 
+        // If DB has whitespace issues, we might need ILIKE or similar, but exact match is standard.
+        // Assuming 'primaryIndicatorName' comes primarily from DB 'pinnedDefs' or 'firstDef', it should match accurately.
+        const { data: detailDataRaw } = await supabase
+            .from("KPI_Detail")
+            .select("*")
+            .eq("indicator_name", primaryIndicatorName)
+            .order('report_date', { ascending: false })
+            .limit(5000); // 5000 limit for robustness
 
         let kpiItems: KPIItem[] = kpiDataRaw || [];
         let kpiDetails: KPIDetail[] = detailDataRaw || [];
+
+        // Filter Summary (Items) by Pinned if any exist (for Dropdowns)
+        if (pinnedNames.length > 0) {
+            const safePinned = pinnedNames.map(n => n.trim());
+            kpiItems = kpiItems.filter(item => item.indicator_name && safePinned.includes(item.indicator_name.trim()));
+        }
+
+        // kpiDetails is already strictly filtered to primaryIndicatorName. 
+        // We can just proceed with it.
 
         // 1. Prepare Filter Options
         const departments = Array.from(new Set(kpiItems.map(item => item.department).filter(Boolean)));
@@ -84,29 +161,8 @@ export default async function DashboardPage(props: {
             filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date <= endDate);
         }
 
-        // 5. Find "Latest Day" WITHIN the filtered range
-        // If range is 2024-01-01 ~ 2024-01-10, latest day is max date in this range.
-        const filteredDates = filteredDetails
-            .map(d => d.report_date ? d.report_date : "")
-            .filter(Boolean);
-
-        const latestFilteredDateStr = filteredDates.length > 0 ? filteredDates.sort().pop()! : "";
-
-        // 6. Metrics for KPI Table (Cumulative for the Month of the Filter End Date)
-        // User request: Same logic as Bar Chart (Cumulative for End Date Month).
-        // "收案月份至資料最後一日指標監控"
-
-        const kpiMonthPrefix = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
-        const kpiRawData = kpiDetails.filter(d =>
-            d.report_date && d.report_date.startsWith(kpiMonthPrefix)
-        );
-
-        // Aggregate by Dept + Indicator (User didn't strictly say Doctor, but usually KPI is granular. Let's aggregate by Department + Indicator for dashboard view)
-        // Or Dept + Doctor + Indicator? The table has NO Doctor column in the view I just saw?
-        // Wait, I checked KPITable.tsx: 
-        // Columns: Dept, Indicator, Value...
-        // NO Doctor column in the file I just read (Step 953).
-        // So I should aggregate by Department + Indicator.
+        // kpiRawData used for metrics calculation - already specific to Primary Indicator
+        const kpiRawData = filteredDetails;
 
         // DRILL DOWN LOGIC
         const isDrillDown = deptFilters.length > 0;
@@ -121,7 +177,6 @@ export default async function DashboardPage(props: {
         }>();
 
         kpiRawData.forEach(item => {
-            // If drill down, aggregate by Doctor. Else by Dept.
             const groupKey = isDrillDown ? item.doctor : item.department;
             const key = `${groupKey}|${item.indicator_name}`;
 
@@ -135,25 +190,50 @@ export default async function DashboardPage(props: {
             };
             kpiAggMap.set(key, {
                 ...current,
-                num: current.num + item.numerator,
-                den: current.den + item.denominator
+                num: current.num + (Number(item.numerator) || 0),
+                den: current.den + (Number(item.denominator) || 0)
             });
         });
 
         const latestMetrics: KPIDetail[] = Array.from(kpiAggMap.values()).map(agg => {
             const val = agg.den > 0 ? parseFloat(((agg.num / agg.den) * 100).toFixed(2)) : 0;
+
+            // Determine Status based on Target
+            const target = targetMap.get(agg.indicator);
+            let status = "正常";
+
+            if (target && target.val !== undefined && target.val !== null) {
+                const tVal = Number(target.val);
+                const op = target.op || ">=";
+
+                let isNormal = true;
+                switch (op) {
+                    case "<=": isNormal = val <= tVal; break;
+                    case ">=": isNormal = val >= tVal; break;
+                    case "<": isNormal = val < tVal; break;
+                    case ">": isNormal = val > tVal; break;
+                    case "=": isNormal = val === tVal; break;
+                    default: isNormal = val >= tVal;
+                }
+
+                if (!isNormal) status = "異常";
+
+            } else {
+                if (val > 0) status = "異常";
+            }
+
             return {
-                id: "-1", // Dummy ID
+                id: "-1",
                 created_at: "",
                 department: agg.dept,
-                doctor: agg.doctor, // Now populated if drill down
+                doctor: agg.doctor,
                 indicator_name: agg.indicator,
                 indicator_def: "",
                 numerator: agg.num,
                 denominator: agg.den,
                 value: val,
                 unit: agg.unit,
-                status: val > 0 ? "異常" : "正常",
+                status,
                 patient_id: "",
                 patient_gender: "",
                 patient_birthday: "",
@@ -164,13 +244,15 @@ export default async function DashboardPage(props: {
                 op_end: "",
                 abnormal_reason: ""
             };
-        }).sort((a, b) => b.value - a.value); // Sort by Value Desc
+        }).sort((a, b) => b.value - a.value);
 
-        // 7. Trend Chart Data (Group by Month - YYYY-MM)
+        // 7. Trend Chart Data
         const trendMap = new Map<string, { sum: number; count: number }>();
-        filteredDetails.forEach((item) => {
+        const trendRelevantDetails = filteredDetails; // Already filtered
+
+        trendRelevantDetails.forEach((item) => {
             if (item.report_date) {
-                const key = item.report_date.substring(0, 7); // YYYY-MM
+                const key = item.report_date.substring(0, 7);
                 const current = trendMap.get(key) || { sum: 0, count: 0 };
                 trendMap.set(key, {
                     sum: current.sum + item.value,
@@ -186,57 +268,51 @@ export default async function DashboardPage(props: {
             }))
             .sort((a, b) => a.date.localeCompare(b.date));
 
-        // 8. Bar Chart Data (Cumulative for the Month of the Filter End Date)
-        // User request: "Recently Month" -> The month of the 'End Date'.
-        // Sort: High to Low.
-
-        const targetDateForBar = endDate || globalMaxDateStr;
-        const barMonthPrefix = targetDateForBar ? targetDateForBar.substring(0, 7) : ""; // YYYY-MM
-
-        const mortalityName = "術後48小時死亡率";
-
-        // Filter filteredDetails (which is strictly range filtered)? 
-        // User said: "迄日當月的累計值". 
-        // If the range selected is small (e.g. 1 day), we might miss the rest of the month if we use filteredDetails.
-        // We should probably use the FULL 'kpiDetails' (base filtered by dept/doctor) and filter by Month Prefix of EndDate.
-
-        const barRawData = kpiDetails.filter(d =>
-            d.indicator_name.replace(/\s/g, "") === "術後48小時死亡率" && // Normalize spaces
-            d.report_date && d.report_date.startsWith(barMonthPrefix)
-        );
+        // 8. Bar Chart Data
+        const barRawData = filteredDetails; // Already filtered
 
         const deptBarMap = new Map<string, { num: number; den: number }>();
         barRawData.forEach(item => {
-            // Aggregate key: If drill down, use Doctor. Else Dept.
             const key = isDrillDown ? item.doctor : item.department;
             const current = deptBarMap.get(key) || { num: 0, den: 0 };
             deptBarMap.set(key, {
-                num: current.num + item.numerator,
-                den: current.den + item.denominator
+                num: current.num + (Number(item.numerator) || 0),
+                den: current.den + (Number(item.denominator) || 0)
             });
         });
 
         const barChartData = Array.from(deptBarMap.entries())
             .map(([key, { num, den }]) => ({
-                department: key, // Reusing 'department' field for display label (it will contain doctor name if drill down)
+                department: key,
                 value: den > 0 ? parseFloat(((num / den) * 100).toFixed(2)) : 0
             }))
-            .sort((a, b) => b.value - a.value); // Descending Sort
+            .sort((a, b) => b.value - a.value);
 
-        // 9. Abnormal Items (Abnormal Details for the Month of the Filter End Date)
-        // User request: "術後 48 小時死亡率 (Monthly)異常詳細清單 當月每日的清單明細"
-        // Use kpiRawData (which is already Month-filtered) and filter for Abnormal status.
+        // 9. Abnormal Items
+        const primaryIndicatorItems = kpiDetails; // Already filtered
 
-        const abnormalItems = kpiRawData
-            .filter((item) => item.status === "異常")
+        const primaryDates = primaryIndicatorItems
+            .map(d => d.report_date ? new Date(d.report_date).getTime() : 0)
+            .filter(d => d > 0);
+        const primaryMaxDateTs = primaryDates.length > 0 ? Math.max(...primaryDates) : 0;
+        const primaryMaxDateStr = primaryMaxDateTs > 0 ? new Date(primaryMaxDateTs).toISOString().split('T')[0] : "";
+
+        const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : primaryMaxDateStr.substring(0, 7);
+
+        const abnormalItems = primaryIndicatorItems
+            .filter((item) => {
+                if (!item.report_date) return false;
+                return item.status === "異常" && item.report_date.startsWith(targetAbnormalMonth);
+            })
             .sort((a, b) => {
                 if (a.report_date && b.report_date) return new Date(b.report_date).getTime() - new Date(a.report_date).getTime();
                 return 0;
             });
 
+
+
         return (
-            <div className="flex-1 space-y-4 p-4 pt-[5px]">
-                {/* Header & Filters */}
+            <div className="flex-1 space-y-4 p-6 md:p-12">
                 <div className="space-y-4">
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
                         <h2 className="text-2xl font-bold tracking-tight">KPIM Dashboard</h2>
@@ -245,6 +321,7 @@ export default async function DashboardPage(props: {
                             <SignOutButton />
                         </div>
                     </div>
+                    <DashboardTabs pinnedIndicators={pinnedNames} currentIndicator={primaryIndicatorName} />
                     <div className="flex justify-start w-full">
                         <DashboardFilters
                             departments={departments}
@@ -256,46 +333,44 @@ export default async function DashboardPage(props: {
                 </div>
 
                 <div className="space-y-8">
-                    {/* TOP: KPI Table (Latest Day Metric) */}
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標監控] 術後 48 小時死亡率-月監控資料最後一日指標監控 (${latestFilteredDateStr ? latestFilteredDateStr.split('T')[0] : "無資料"})`}
+                            title={`[指標監控] ${primaryIndicatorName} - 區間累計 (${startDate || globalMinDateStr} ~ ${endDate || globalMaxDateStr})`}
                             viewType={isDrillDown ? "doctor" : "department"}
+                            numeratorLabel={numeratorLabel}
+                            denominatorLabel={denominatorLabel}
                         />
                     </div>
 
-                    {/* MIDDLE: Charts Section */}
-                    <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
-                        {/* Trend Chart (Left) - Uses Date Range Filter */}
-                        <div className="col-span-1 md:col-span-2 lg:col-span-4">
-                            <TrendChart data={trendData} title="指標趨勢 (月統計)" />
-                        </div>
+                    <div>
+                        <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
+                            <div className="col-span-1 md:col-span-2 lg:col-span-4">
+                                <TrendChart data={trendData} title={`${primaryIndicatorName} 趨勢 (月統計)`} />
+                            </div>
 
-                        {/* Bar Chart (Right) - Uses Latest Day */}
-                        <div className="col-span-1 md:col-span-2 lg:col-span-3">
-                            <DepartmentChart
-                                data={barChartData}
-                                title={isDrillDown ? "依醫師 術後 48 小時死亡率" : "最近一月依科別 術後 48 小時死亡率"}
-                            />
+                            <div className="col-span-1 md:col-span-2 lg:col-span-3">
+                                <DepartmentChart
+                                    data={barChartData}
+                                    title={isDrillDown ? `依醫師 ${primaryIndicatorName}` : `最近一月依科別 ${primaryIndicatorName}`}
+                                />
+                            </div>
                         </div>
                     </div>
-                </div>
 
-                {/* BOTTOM: Abnormal Table */}
-                <div className="space-y-4">
-                    <AbnormalTable items={abnormalItems} />
+                    <div className="space-y-4">
+                        <AbnormalTable items={abnormalItems} title={`${primaryIndicatorName} (${targetAbnormalMonth || '無資料'}) 異常詳細清單`} />
+                    </div>
+
+
                 </div>
             </div>
-
         );
 
     } catch (error) {
-        // Next.js uses errors for redirects. We need to rethrow it.
         if (error instanceof Error && error.message === "NEXT_REDIRECT") {
             throw error;
         }
-        // Check for digest property which newer Next.js versions might use or specific code
         if ((error as any)?.digest?.startsWith?.('NEXT_REDIRECT')) {
             throw error;
         }

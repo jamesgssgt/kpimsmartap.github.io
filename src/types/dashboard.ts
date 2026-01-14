@@ -30,4 +30,6 @@ export interface KPIDetail {
     patient_age?: number;
     op_start?: string;
     op_end?: string;
+    hospital_name?: string;
+    doctor_id?: string;
 }

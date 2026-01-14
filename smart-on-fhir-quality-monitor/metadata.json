@@ -1,0 +1,8 @@
+{
+  "name": "Smart-on-FHIR Quality Monitor",
+  "description": "A high-end quality indicator monitoring system for healthcare providers. Define numerator/denominator metrics via FHIR visual mappings, analyze medical reports with AI, and track hospital performance in real-time.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}

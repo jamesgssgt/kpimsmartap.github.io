@@ -41,10 +41,10 @@ export function MeasurePopulation({ title, type, population, onChange }: Measure
                 onChange={(conditions: any) => onChange({ ...population, conditions })}
             />
 
-            {/* CQL 語法提示 */}
+            {/* 邏輯提示 */}
             <div className="mt-4 p-3 bg-gray-50 rounded border border-gray-100">
                 <code className="text-sm text-green-700 block break-all">
-                    CQL 範例: [{(population.resources && population.resources[0]) || 'Resource'}: {type === 'denominator' ? 'surgery' : 'antibiotic-1h'}]
+                    邏輯範例: [{(population.resources && population.resources[0]) || 'Resource'}]
                 </code>
             </div>
         </div>

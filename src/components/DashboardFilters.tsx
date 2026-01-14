@@ -26,6 +26,7 @@ export function DashboardFilters({
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
+    // Init state from URL (or defaults if first load - handled by layout/page usually, but we fallback here)
     const [selectedDepts, setSelectedDepts] = React.useState<string[]>(
         () => searchParams.get("dept")?.split(",").filter(Boolean) || []
     );
@@ -36,78 +37,114 @@ export function DashboardFilters({
     const [startDate, setStartDate] = React.useState(searchParams.get("startDate") || defaultStartDate || "");
     const [endDate, setEndDate] = React.useState(searchParams.get("endDate") || defaultEndDate || "");
 
-    // FIX: Redirect to defaults on Mount if params missing (First Load / Reload behavior)
-    React.useEffect(() => {
+    // Helper to push URL updates
+    const updateUrl = React.useCallback((
+        newDepts: string[],
+        newDocs: string[],
+        newStart: string,
+        newEnd: string
+    ) => {
         const params = new URLSearchParams(searchParams.toString());
-        let hasChanges = false;
 
-        if (!params.has("startDate") && defaultStartDate) {
-            params.set("startDate", defaultStartDate);
-            hasChanges = true;
-        }
-        if (!params.has("endDate") && defaultEndDate) {
-            params.set("endDate", defaultEndDate);
-            hasChanges = true;
-        }
+        if (newDepts.length > 0) params.set("dept", newDepts.join(","));
+        else params.delete("dept");
 
-        if (hasChanges) {
-            // Use replace to set defaults without adding to history stack (optional, or push)
-            // User wants "Default on Load".
-            router.replace(`${pathname}?${params.toString()}`);
-        }
-    }, []); // Run ONCE on mount
+        if (newDocs.length > 0) params.set("doctor", newDocs.join(","));
+        else params.delete("doctor");
 
-    // FIX: Sync local state when URL params change externally
+        if (newStart) params.set("startDate", newStart);
+        else params.delete("startDate");
+
+        if (newEnd) params.set("endDate", newEnd);
+        else params.delete("endDate");
+
+        const newQueryString = params.toString();
+        // Use replace for smoother filtering, keys don't need history spam typically
+        router.replace(`${pathname}?${newQueryString}`);
+    }, [searchParams, pathname, router]);
+
+    // 1. Handle Dept/Doctor Changes IMMEDIATELY (No debounce required for selects)
+    const handleDeptChange = (depts: string[]) => {
+        setSelectedDepts(depts);
+        updateUrl(depts, selectedDoctors, startDate, endDate);
+    };
+
+    const handleDoctorChange = (docs: string[]) => {
+        setSelectedDoctors(docs);
+        updateUrl(selectedDepts, docs, startDate, endDate);
+    };
+
+    // 2. Handle Date Changes with DEBOUNCE (to avoid flashing URL while typing)
+    const handleStartDateChange = (val: string) => {
+        setStartDate(val);
+    };
+
+    const handleEndDateChange = (val: string) => {
+        setEndDate(val);
+    };
+
+    // Effect for Date Debounce
+    React.useEffect(() => {
+        const timer = setTimeout(() => {
+            // Only update if dates differ from URL to avoid redundant pushes
+            const urlStart = searchParams.get("startDate") || "";
+            const urlEnd = searchParams.get("endDate") || "";
+
+            // Check if we actually need to update URL (dates changed locally)
+            const needsUpdate = (startDate !== urlStart || endDate !== urlEnd);
+
+            if (needsUpdate) {
+                updateUrl(selectedDepts, selectedDoctors, startDate, endDate);
+            }
+        }, 800);
+        return () => clearTimeout(timer);
+    }, [startDate, endDate, updateUrl, selectedDepts, selectedDoctors, searchParams]);
+
+    // 3. Sync from URL *inwards* ONLY if URL changed via navigation (e.g. Back button)
+    // We compare JSON stringify to avoid loop.
     React.useEffect(() => {
         const urlDepts = searchParams.get("dept")?.split(",").filter(Boolean) || [];
         const urlDoctors = searchParams.get("doctor")?.split(",").filter(Boolean) || [];
-
-        // Always trust URL. If empty, it means user cleared it (or we haven't redirected yet).
-        // If we haven't redirected yet (race condition), specific "Mount" logic handles the redirect.
-        // But if we are in valid "Clear" state, URL is empty.
         const urlStart = searchParams.get("startDate") || "";
         const urlEnd = searchParams.get("endDate") || "";
 
-        if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) setSelectedDepts(urlDepts);
-        setSelectedDoctors(urlDoctors);
+        // Only update local state if it drastically differs (external nav)
+        // Note: This collision with local state is the usual source of bugs.
+        // We defer to URL as source of truth, BUT we must be careful not to overwrite
+        // in-progress user editing (dates).
+        // Since we debounce dates, instant URL overwrite is bad.
+        // Strategy: Only sync Dept/Doc if different. Dates only if not focused? Hard to know focus.
+        // Simple strategy: If URL changes, we update. 
+        // Logic: dept/doc are instant, so they should match. Dates are debounced.
 
-        if (urlStart !== startDate) setStartDate(urlStart);
-        if (urlEnd !== endDate) setEndDate(urlEnd);
+        if (JSON.stringify(urlDepts) !== JSON.stringify(selectedDepts)) {
+            setSelectedDepts(urlDepts);
+        }
+        if (JSON.stringify(urlDoctors) !== JSON.stringify(selectedDoctors)) {
+            setSelectedDoctors(urlDoctors);
+        }
+
+        // For Dates, if URL date is "A" and local is "B" (typing), and "B" hasn't pushed yet...
+        // If we overwrite B with A, we lose typing.
+        // But if A changed because user hit Back, we MUST overwrite B.
+        // This is tricky. Let's assume URL update is dominant. 
+        // With 800ms debounce, conflict is rare unless rapid nav.
+        if (urlStart && urlStart !== startDate) setStartDate(urlStart);
+        if (urlEnd && urlEnd !== endDate) setEndDate(urlEnd);
+
+        // Initialize Defaults if missing (First Load)
+        if (!urlStart && defaultStartDate && !startDate) {
+            setStartDate(defaultStartDate);
+            // We don't auto-push default to URL here to keep URL clean, 
+            // but `page.tsx` needs to know. 
+            // Actually, `page.tsx` uses defaults if params empty.
+            // We just need UI to match.
+        }
+        if (!urlEnd && defaultEndDate && !endDate) {
+            setEndDate(defaultEndDate);
+        }
+
     }, [searchParams]);
-
-    // Sync state with URL
-    React.useEffect(() => {
-        const timer = setTimeout(() => {
-            let finalDepts = [...selectedDepts];
-
-            // 2. Build URL Params
-            const params = new URLSearchParams(searchParams.toString());
-
-            if (finalDepts.length > 0) params.set("dept", finalDepts.join(","));
-            else params.delete("dept");
-
-            if (selectedDoctors.length > 0) params.set("doctor", selectedDoctors.join(","));
-            else params.delete("doctor");
-
-            if (startDate) params.set("startDate", startDate);
-            else params.delete("startDate");
-
-            if (endDate) params.set("endDate", endDate);
-            else params.delete("endDate");
-
-            const newQueryString = params.toString();
-            const currentQueryString = searchParams.toString();
-
-            if (newQueryString !== currentQueryString) {
-                router.push(`${pathname}?${newQueryString}`);
-            }
-        }, 800);
-
-        return () => clearTimeout(timer);
-    }, [selectedDepts, selectedDoctors, startDate, endDate, router, pathname, searchParams]);
-
-    const handleDeptChange = (depts: string[]) => setSelectedDepts(depts);
-    const handleDoctorChange = (docs: string[]) => setSelectedDoctors(docs);
 
     // Filtered options
     const deptOptions = departments.map(d => ({ label: d, value: d }));
@@ -125,14 +162,14 @@ export function DashboardFilters({
                     <Input
                         type="date"
                         value={startDate}
-                        onChange={(e) => setStartDate(e.target.value)}
+                        onChange={(e) => handleStartDateChange(e.target.value)}
                         className="w-[160px]"
                     />
                     <span className="font-medium whitespace-nowrap">～迄：</span>
                     <Input
                         type="date"
                         value={endDate}
-                        onChange={(e) => setEndDate(e.target.value)}
+                        onChange={(e) => handleEndDateChange(e.target.value)}
                         className="w-[160px]"
                     />
                 </div>
@@ -164,13 +201,14 @@ export function DashboardFilters({
                     </div>
                 )}
 
-                {(selectedDepts.length > 0 || selectedDoctors.length > 0 || startDate || endDate) && (
+                {(selectedDepts.length > 0 || selectedDoctors.length > 0 || (startDate && startDate !== defaultStartDate) || (endDate && endDate !== defaultEndDate)) && (
                     <button
                         onClick={() => {
                             setSelectedDepts([]);
                             setSelectedDoctors([]);
-                            setStartDate("");
-                            setEndDate("");
+                            setStartDate(defaultStartDate || "");
+                            setEndDate(defaultEndDate || "");
+                            updateUrl([], [], defaultStartDate || "", defaultEndDate || "");
                         }}
                         className="px-4 py-2 bg-destructive text-destructive-foreground hover:bg-destructive/90 rounded-md text-sm font-medium transition-colors"
                     >

@@ -201,7 +201,7 @@ export default async function FavoritesPage(props: {
             });
 
         return (
-            <div className="flex-1 space-y-4 p-4 pt-[5px]">
+            <div className="flex-1 space-y-4 p-6 md:p-12">
                 <div className="space-y-4">
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
                         <h2 className="text-2xl font-bold tracking-tight">My Favorites</h2>

@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import SmartLoader from "@/components/SmartLoader";
 import { SidebarNav } from "@/components/dashboard/SidebarNav";
+import { SettingsProvider } from "@/contexts/SettingsContext";
 
 export const metadata: Metadata = {
     title: "KPIM Dashboard",
@@ -14,18 +15,20 @@ export default function DashboardLayout({
 }) {
     return (
         <div className="min-h-screen bg-muted/10">
-            <SmartLoader>
-                <div className="flex h-screen flex-col md:flex-row md:overflow-hidden">
-                    <div className="w-full flex-none md:w-64 bg-card border-r p-4">
-                        {/* Sidebar Placeholder */}
-                        <h1 className="text-xl font-bold text-primary mb-6">KPIM Smart ON FHIR APP</h1>
-                        <SidebarNav />
+            <SettingsProvider>
+                <SmartLoader>
+                    <div className="flex h-screen flex-col md:flex-row md:overflow-hidden">
+                        <div className="w-full flex-none md:w-64 bg-card border-r p-4">
+                            {/* Sidebar Placeholder */}
+                            <h1 className="text-xl font-bold text-primary mb-6">KPIM Smart ON FHIR APP</h1>
+                            <SidebarNav />
+                        </div>
+                        <div className="flex-grow md:overflow-y-auto">
+                            {children}
+                        </div>
                     </div>
-                    <div className="flex-grow p-6 md:overflow-y-auto md:p-12">
-                        {children}
-                    </div>
-                </div>
-            </SmartLoader>
+                </SmartLoader>
+            </SettingsProvider>
         </div>
     );
 }

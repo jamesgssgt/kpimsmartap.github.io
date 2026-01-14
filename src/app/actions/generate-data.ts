@@ -4,7 +4,7 @@ import { createClient } from "@/utils/supabase/server";
 
 const FHIR_SERVER_URL = "https://launch.smarthealthit.org/v/r4/fhir";
 const TOTAL_CASES = 300;
-const DAYS_BACK = 180;
+
 
 interface Hospital {
     code: string;
@@ -124,27 +124,44 @@ async function createInfrastructure() {
     return infra;
 }
 
-export async function generateData() {
+const DAYS_BACK = 180;
+
+// ... (Hospital/Dept/Infra logic remains same)
+
+export async function generateData(mode: 'mortality' | 'antibiotic') {
     try {
         const supabase = await createClient();
+        const indicatorName = mode === 'mortality' ? '手術後 48 小時內死亡率' : '預防性抗生素在手術劃刀前1小時內給予比率';
 
-        // Clear existing data
-        await supabase.from("KPI").delete().neq("id", -1);
-        await supabase.from("KPI_Detail").delete().neq("id", -1);
+        // Clear existing data FOR THIS INDICATOR only?
+        // Or clear all? The user says "Separate into two".
+        // If we clear ALL, then running one deletes the other. That is bad.
+        // We should only clear data for the target indicator.
+        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
+        await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
+
+        // Also need to clear/reset FHIR? 
+        // Realistically, we can't easily "reset" FHIR without wiping everything.
+        // For this demo, we can just ADD to FHIR (upsert).
+        // But if we re-run, we might duplicate patients if we don't hold state.
+        // The current script manages IDs deterministically-ish or just randoms.
+        // Let's assume we proceed with generating NEW data or Overwriting based on ID collision.
+        // "getLongId" is random.
+        // To avoid exploding DB size, maybe we DO want to clear everything if it's a "Demo Generator".
+        // But the user asked to split. 
+        // Let's compromise: The generator wipes the purely "Transactional" KPI tables for the specific indicator, 
+        // but keeps or overwrites FHIR data. 
+        // actually, safely we can just append, but `KPI` table (summary) needs recalc.
+        // The `KPI` delete above handles the summary.
+        // The `KPI_Detail` delete handles the detail.
 
         const infra = await createInfrastructure();
         const kpiDetailsBuffer = [];
 
-        // Revised Logic:
-        // 1. Coverage: Each Dept, Each Day -> 1 case.
-        // 2. Abnormals: At least 10 per month.
-        // 3. Total: Fill up to 1000.
-
         // Config
         const targetTotal = 1000;
-        const daysBack = 100; // 100 days fits nicely into ~1000 cases with 9 depts (900 cases)
 
-        // Flatten depts for easy iteration
+        // Flatten depts
         const allDepts: { hospCode: string; deptInfo: any }[] = [];
         for (const [hCode, hData] of Object.entries(infra)) {
             for (const d of hData.depts) {
@@ -154,16 +171,12 @@ export async function generateData() {
 
         // Helper to generate a single case
         const createCase = async (dayIndex: number, specificDept?: any, forceAbnormal?: boolean) => {
-            // Dates - Fixed Anchor to 2025-11-20
-            const now = new Date("2025-11-20T23:59:59");
+            // ... (Date/Dept logic same)
+            const now = new Date();
             const opStart = new Date(now.getTime() - dayIndex * 24 * 60 * 60 * 1000);
             opStart.setHours(randomInt(8, 16));
             opStart.setMinutes(randomInt(0, 59));
-
-            // Per Definition: Count from Anesthesia Start
-            // Assume Anesthesia starts ~30 mins before Op Start
             const anesthesiaStart = new Date(opStart.getTime() - 30 * 60 * 1000);
-
             const opEnd = new Date(opStart.getTime() + randomInt(60, 240) * 60 * 1000);
             const admissionDate = new Date(opStart.getTime() - randomInt(1, 2) * 24 * 60 * 60 * 1000);
             const dischargeDate = new Date(opEnd.getTime() + randomInt(2, 10) * 24 * 60 * 60 * 1000);
@@ -171,7 +184,6 @@ export async function generateData() {
             // Select Dept
             let chosenDeptObj = specificDept;
             let hCode = "";
-
             if (!chosenDeptObj) {
                 const randomSel = randomChoice(allDepts);
                 chosenDeptObj = randomSel.deptInfo;
@@ -183,45 +195,58 @@ export async function generateData() {
             if (forceAbnormal) {
                 isBad = true;
             } else {
-                // Low random chance for normal coverage
                 isBad = Math.random() < 0.02;
             }
 
-            let isNumerator = false; // KPI Numerator hit
+            // 1. Mortality Logic
+            let isMortalityNum = false;
             let isDeceased = false;
-            let abnormalReason = null;
+            let mortalityReason = null;
             let deathTime = null;
-            let dischargeDispositionCode = "home"; // default
+            let dischargeDispositionCode = "home";
 
-            if (isBad) {
-                // Determine Scenario: 
-                // 1. In-Hospital Death within 48h of Anesthesia
-                // 2. Critical AAD (Against Advice Discharge) within 48h of Anesthesia
+            // Only apply abnormal logic if mode matches or it's random chance?
+            // User wants "Generating demo data... split into two".
+            // If I click "Mortality", I expect Mortality data to be interesting.
+            // I don't necessarily care about Antibiotics data in that click, or I might want it "normal".
 
-                const isAAD = Math.random() < 0.3; // 30% chance AAD scenario
-
-                // Time limits: Must be within 48h of Anesthesia Start
-                const hoursPostAnes = randomInt(2, 46); // 2 to 46 hours
+            if (mode === 'mortality' && isBad) {
+                const isAAD = Math.random() < 0.3;
+                // ... (Mortality logic)
+                const hoursPostAnes = randomInt(2, 46);
                 const eventTime = new Date(anesthesiaStart.getTime() + hoursPostAnes * 60 * 60 * 1000);
-
-                // Ensure event happened after Op End? Not necessarily, could die during op, but for simplicity assume post-op or peri-op.
-                // KPI says "Post-op 48h mortality" usually implies post-op, but definition says "within 48h of anesthesia".
-                // We'll treat eventTime as the "End Point".
-
                 dischargeDate.setTime(eventTime.getTime());
-                isNumerator = true;
-
+                isMortalityNum = true;
                 if (isAAD) {
-                    abnormalReason = "病危自動出院(AAD) - 麻醉後48小時內";
-                    dischargeDispositionCode = "aadvice"; // Left against advice
+                    mortalityReason = "病危自動出院(AAD) - 麻醉後48小時內";
+                    dischargeDispositionCode = "aadvice";
                 } else {
                     isDeceased = true;
                     deathTime = eventTime;
-                    abnormalReason = "術後48小時內院內死亡";
-                    dischargeDispositionCode = "exp"; // Expired
+                    mortalityReason = "術後48小時內院內死亡";
+                    dischargeDispositionCode = "exp";
                 }
             }
 
+            // 2. Antibiotic Logic
+            // If mode is antibiotic, we might force bad cases if forceAbnormal is true.
+            let isAntibioticSuccess = true;
+
+            if (mode === 'antibiotic') {
+                if (forceAbnormal) {
+                    isAntibioticSuccess = false; // Force fail
+                } else {
+                    isAntibioticSuccess = Math.random() > 0.08; // Random fail (92% success rate)
+                }
+            } else {
+                // If generating mortality, just random normal-ish antibiotic
+                isAntibioticSuccess = Math.random() > 0.08;
+            }
+
+            const antibioticNum = isAntibioticSuccess ? 1 : 0;
+            const antibioticReason = isAntibioticSuccess ? null : "未在劃刀前1小時內給藥";
+
+            // ... (FHIR saves same as before)
             // Decorate Data
             // @ts-ignore
             const deptName = DEPT_TEMPLATE[chosenDeptObj.dept_code].name;
@@ -295,48 +320,86 @@ export async function generateData() {
                         display: selectedIcd.display
                     }]
                 },
-                // Add ASA info as extension or observation if strict, but ignoring for mock
                 performer: [{ actor: { reference: `Practitioner/${docId}` } }]
             });
 
             // Report Date Logic: Surgery Completion Date
             const reportDate = opEnd.toISOString();
+            const hospNameRaw = chosenDeptObj.org_name.match(/【(.*?)】/)?.[1] || "Unknown Hospital";
 
-            return {
-                department: deptName,
-                doctor: docName,
-                indicator_name: "術後48小時死亡率",
-                indicator_def: "麻醉開始後48小時內死亡(含AAD)",
-                numerator: isNumerator ? 1 : 0,
-                denominator: 1,
-                value: isNumerator ? 1 : 0,
-                patient_id: patId,
-                patient_gender: gender,
-                patient_birthday: birthDateStr,
-                status: isNumerator ? "異常" : "正常",
-                unit: "%",
-                report_date: reportDate,
-                admission_date: admissionDate.toISOString(),
-                discharge_date: dischargeDate.toISOString(),
-                op_start: opStart.toISOString(),
-                op_end: opEnd.toISOString(),
-                abnormal_reason: abnormalReason,
-                monthKey: opStart.toISOString().substring(0, 7)
-            };
+            const results = [];
+
+            // ONLY push the result for the requested mode
+            if (mode === 'mortality') {
+                results.push({
+                    department: deptName,
+                    doctor: docName,
+                    indicator_name: "手術後 48 小時內死亡率",
+                    indicator_def: "麻醉開始後48小時內死亡(含AAD)",
+                    numerator: isMortalityNum ? 1 : 0,
+                    denominator: 1,
+                    value: isMortalityNum ? 1 : 0,
+                    patient_id: patId,
+                    patient_gender: gender,
+                    patient_birthday: birthDateStr,
+                    patient_age: age,
+                    status: isMortalityNum ? "異常" : "正常",
+                    unit: "%",
+                    report_date: reportDate,
+                    admission_date: admissionDate.toISOString(),
+                    discharge_date: dischargeDate.toISOString(),
+                    op_start: opStart.toISOString(),
+                    op_end: opEnd.toISOString(),
+                    abnormal_reason: mortalityReason,
+                    monthKey: opStart.toISOString().substring(0, 7),
+                    hospital_name: hospNameRaw,
+                    doctor_id: docId
+                });
+            }
+
+            if (mode === 'antibiotic') {
+                results.push({
+                    department: deptName,
+                    doctor: docName,
+                    indicator_name: "預防性抗生素在手術劃刀前1小時內給予比率",
+                    indicator_def: "手術劃刀前1小時內給予預防性抗生素人次 / 手術人次 * 100%",
+                    numerator: antibioticNum,
+                    denominator: 1,
+                    value: antibioticNum,
+                    patient_id: patId,
+                    patient_gender: gender,
+                    patient_birthday: birthDateStr,
+                    patient_age: age,
+                    status: !isAntibioticSuccess ? "異常" : "正常",
+                    unit: "%",
+                    report_date: reportDate,
+                    admission_date: admissionDate.toISOString(),
+                    discharge_date: dischargeDate.toISOString(),
+                    op_start: opStart.toISOString(),
+                    op_end: opEnd.toISOString(),
+                    abnormal_reason: antibioticReason,
+                    monthKey: opStart.toISOString().substring(0, 7),
+                    hospital_name: hospNameRaw,
+                    doctor_id: docId
+                });
+            }
+
+            return results;
         };
 
+        // ... (Loop logic adjusted slightly for selective forcing)
+
         // 1. Coverage Loop
-        // Generate promises in chunks to prevent overwhelming
         const coveragePromises = [];
 
-        for (let d = 0; d < daysBack; d++) {
+        for (let d = 0; d < DAYS_BACK; d++) {
             for (const deptItem of allDepts) {
+                // Generate base coverage (normal or random bad)
                 coveragePromises.push(() => createCase(d, deptItem.deptInfo, false));
             }
         }
 
         // Execute Coverage
-        // Process in chunks of 50
         const generatedItems = [];
         const abnormalCounts: Record<string, number> = {};
 
@@ -345,7 +408,7 @@ export async function generateData() {
             for (let i = 0; i < taskFactories.length; i += 50) {
                 const batch = taskFactories.slice(i, i + 50);
                 const batchRes = await Promise.all(batch.map(f => f()));
-                results.push(...batchRes);
+                results.push(...batchRes.flat());
             }
             return results;
         };
@@ -353,20 +416,30 @@ export async function generateData() {
         const coverageResults = await processBatch(coveragePromises);
         generatedItems.push(...coverageResults);
 
-        // Count Abnormals
+        // Count Abnormals (Only for the active mode's numerator)
         coverageResults.forEach(item => {
-            if (item.numerator > 0) {
-                abnormalCounts[item.monthKey] = (abnormalCounts[item.monthKey] || 0) + 1;
+            if (item.numerator > 0) { // For mortality, num=1 means bad. For antibiotic, num=0 means bad (logic inverted in code?)
+                // Wait, previous code:
+                // Mortality: numerator = 1 (Bad)
+                // Antibiotic: numerator = 1 (Good), value = 1.
+                // Status: !isAntibioticSuccess ? "異常" : "正常"
+
+                // We want to count *rows* that will be 'abnormal' to ensure we have enough 'abnormal' cases for demo.
+                // Mortality: Abnormal if numerator == 1.
+                // Antibiotic: Abnormal if status == '異常' (which means numerator == 0).
+
+                const isAbnormal = item.status === '異常';
+                if (isAbnormal) {
+                    abnormalCounts[item.monthKey] = (abnormalCounts[item.monthKey] || 0) + 1;
+                }
             }
         });
 
         // 2. Abnormal Filling
         const abnormalPromises = [];
-        // Ensure at least 10 abnormal cases per month
-        // Map Days to Months for accurate backfilling
         const daysByMonth: Record<string, number[]> = {};
-        for (let d = 0; d < daysBack; d++) {
-            const now = new Date("2025-11-20T23:59:59");
+        for (let d = 0; d < DAYS_BACK; d++) {
+            const now = new Date();
             const date = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
             const mKey = date.toISOString().substring(0, 7);
             if (!daysByMonth[mKey]) daysByMonth[mKey] = [];
@@ -390,8 +463,15 @@ export async function generateData() {
         // 3. Fill Remainder to Target
         let currentTotal = generatedItems.length;
         const fillPromises = [];
-        while (currentTotal < targetTotal) {
-            const dIndex = randomInt(0, daysBack - 1);
+        // Increase target if 6 months? 1000 might be thin for 180 days * 9 depts = 1620 min coverage?
+        // 180 days * 9 depts = 1620 cases just for 1/day/dept.
+        // So target should be higher, maybe 2000? Or just let coverage be the floor.
+        // If coverage is ~1600, target 1000 is useless.
+        // Let's set target to max(2000, coverage + 100).
+        const realTarget = Math.max(2000, generatedItems.length + 50);
+
+        while (currentTotal < realTarget) {
+            const dIndex = randomInt(0, DAYS_BACK - 1);
             fillPromises.push(() => createCase(dIndex, undefined, false));
             currentTotal++;
         }
@@ -401,15 +481,9 @@ export async function generateData() {
 
         kpiDetailsBuffer.push(...generatedItems);
 
-        // Aggregate KPI in memory
+        // ... Summary Calculation & Save Logic (Only for the indicatorName we are processing) ...
         const summaryMap = new Map<string, any>();
-
         for (const d of kpiDetailsBuffer) {
-            // Key: hospital|dept|doctor|indicator
-            // Note: hospital is not in d anymore, but we need it for unique key if we want to distinguish? 
-            // Actually, the previous logic used it. Let's rely on department as it is unique enough or include hospital in the object but remove for DB.
-            // A better approach: The 'department' name already includes hospital name "【Hospital】Dept".
-            // So we can just use department.
             const key = `${d.department}|${d.doctor}|${d.indicator_name}`;
             if (!summaryMap.has(key)) {
                 summaryMap.set(key, {
@@ -432,19 +506,9 @@ export async function generateData() {
             value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
         }));
 
-        // Save to Supabase
-
-        // 1. KPI
-        const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" }); // Assuming conflict strategy or just insert
-        // Note: The python script uses 'resolution=merge-duplicates' which is upsert. 
-        // Better to ensure table has constraints or just insert. For now using upsert if PK exists, or insert.
-        // If no PK, we might duplicate. Python script implies standard bulk insert.
-        // Let's assume standard Insert for simplicity unless constraints are known.
-        // But `upsert` is safer if run multiple times.
+        const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
         if (kpiError) console.error("Error saving KPI Summary:", kpiError);
 
-        // 2. KPI Details
-        // Remove 'monthKey' which is for internal logic only
         const cleanDetails = kpiDetailsBuffer.map(({ monthKey, ...rest }) => rest);
         const { error: detailError } = await supabase.from("KPI_Detail").insert(cleanDetails);
         if (detailError) console.error("Error saving KPI Details:", detailError);
@@ -453,10 +517,39 @@ export async function generateData() {
             return { success: false, message: "生成過程中發生資料庫錯誤" };
         }
 
-        return { success: true, message: "資料生成完成" };
+        return { success: true, message: `[${indicatorName}] 生成完成 (共 ${generatedItems.length} 筆)` };
 
     } catch (err) {
         console.error(err);
         return { success: false, message: "生成失敗: " + String(err) };
+    }
+}
+
+export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic' = 'all') {
+    try {
+        const supabase = await createClient();
+
+        if (mode === 'all') {
+            const { error: e1 } = await supabase.from("KPI").delete().neq('id', -1); // Delete all (assuming bigint id)
+            const { error: e2 } = await supabase.from("KPI_Detail").delete().neq('id', -1); // Delete all
+            // Note: Supabase delete without where clause might be blocked by safe mode in some clients, 
+            // but usually allowed in server-side client if RLS allows or service key used.
+            // Using .neq('id', '...') is a trick to delete all if "delete()" without args is blocked.
+
+            if (e1) throw new Error("Error clearing KPI: " + e1.message);
+            if (e2) throw new Error("Error clearing KPI_Detail: " + e2.message);
+        } else {
+            const indicatorName = mode === 'mortality' ? '手術後 48 小時內死亡率' : '預防性抗生素在手術劃刀前1小時內給予比率';
+            const { error: e1 } = await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
+            const { error: e2 } = await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
+
+            if (e1) throw new Error("Error clearing KPI: " + e1.message);
+            if (e2) throw new Error("Error clearing KPI_Detail: " + e2.message);
+        }
+
+        return { success: true, message: "資料已成功清除" };
+    } catch (err) {
+        console.error("Clear Data Error:", err);
+        return { success: false, message: "清除失敗: " + String(err) };
     }
 }
