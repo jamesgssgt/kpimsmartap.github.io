@@ -3,50 +3,51 @@ import { SMART_CONFIG, getSmartMetadata } from "@/utils/smart-conf";
 import { cookies } from "next/headers";
 import crypto from "node:crypto";
 
-try {
-    const searchParams = request.nextUrl.searchParams;
-    const iss = searchParams.get("iss") || SMART_CONFIG.iss;
-    const launch = searchParams.get("launch");
+export async function GET(request: NextRequest) {
+    try {
+        const searchParams = request.nextUrl.searchParams;
+        const iss = searchParams.get("iss") || SMART_CONFIG.iss;
+        const launch = searchParams.get("launch");
 
-    // 1. Get Metadata to find authorization_endpoint
-    const metadata = await getSmartMetadata(iss);
-    const authUrl = metadata?.authorization_endpoint || "https://launch.smarthealthit.org/v/r4/auth/authorize"; // Fallback for sandbox
+        // 1. Get Metadata to find authorization_endpoint
+        const metadata = await getSmartMetadata(iss);
+        const authUrl = metadata?.authorization_endpoint || "https://launch.smarthealthit.org/v/r4/auth/authorize"; // Fallback for sandbox
 
-    // 2. Generate State & PKCE (With valid crypto)
-    const state = Math.random().toString(36).substring(7);
+        // 2. Generate State & PKCE (With valid crypto)
+        const state = Math.random().toString(36).substring(7);
 
-    // PKCE: Generate code_verifier and code_challenge
-    // Fix: Use crypto.randomBytes for Node.js environment instead of Web Crypto's getRandomValues on the module
-    const code_verifier = crypto.randomBytes(32).toString('base64url');
-    const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
+        // PKCE: Generate code_verifier and code_challenge
+        // Fix: Use crypto.randomBytes for Node.js environment instead of Web Crypto's getRandomValues on the module
+        const code_verifier = crypto.randomBytes(32).toString('base64url');
+        const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
-    // 3. Construct URL
-    const params = new URLSearchParams({
-        response_type: "code",
-        client_id: SMART_CONFIG.clientId,
-        // Use dynamic redirect URI based on the current request origin (supports Vercel Preview/Production)
-        redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
-        aud: iss,
-        state: state,
-        code_challenge: code_challenge,
-        code_challenge_method: "S256",
-        scope: SMART_CONFIG.scope,
-    });
+        // 3. Construct URL
+        const params = new URLSearchParams({
+            response_type: "code",
+            client_id: SMART_CONFIG.clientId,
+            // Use dynamic redirect URI based on the current request origin (supports Vercel Preview/Production)
+            redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
+            aud: iss,
+            state: state,
+            code_challenge: code_challenge,
+            code_challenge_method: "S256",
+            scope: SMART_CONFIG.scope,
+        });
 
-    if (launch) {
-        params.append("launch", launch);
+        if (launch) {
+            params.append("launch", launch);
+        }
+
+        // 4. Store state and iss in cookie for callback verification
+        const cookieStore = await cookies();
+        cookieStore.set("smart_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+        cookieStore.set("smart_iss", iss, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+        cookieStore.set("smart_code_verifier", code_verifier, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+
+        // 5. Redirect
+        return NextResponse.redirect(`${authUrl}?${params.toString()}`);
+    } catch (error) {
+        console.error("SMART Launch Error:", error);
+        return new NextResponse(`SMART Launch Error: ${String(error)}`, { status: 500 });
     }
-
-    // 4. Store state and iss in cookie for callback verification
-    const cookieStore = await cookies();
-    cookieStore.set("smart_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-    cookieStore.set("smart_iss", iss, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-    cookieStore.set("smart_code_verifier", code_verifier, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-
-    // 5. Redirect
-    return NextResponse.redirect(`${authUrl}?${params.toString()}`);
-} catch (error) {
-    console.error("SMART Launch Error:", error);
-    return new NextResponse(`SMART Launch Error: ${String(error)}`, { status: 500 });
-}
 }
