@@ -1,0 +1,25 @@
+
+> web@0.1.0 build
+> next build
+
+▲ Next.js 16.1.0 (Turbopack)
+- Environments: .env.local
+
+⚠ The "middleware" file convention is deprecated. Please use "proxy" instead. Learn more: https://nextjs.org/docs/messages/middleware-to-proxy
+  Creating an optimized production build ...
+✓ Compiled successfully in 2.3s
+  Running TypeScript ...
+Failed to compile.
+
+./smart-on-fhir-quality-monitor/components/IndicatorForm.tsx:176:53
+Type error: Argument of type '{ resourceType: FhirResource; path: string | undefined; name: string; description: string; }' is not assignable to parameter of type '{ indicatorName: string; indicatorDesc: string; resourceType: string; path?: string | undefined; }'.
+  Type '{ resourceType: FhirResource; path: string | undefined; name: string; description: string; }' is missing the following properties from type '{ indicatorName: string; indicatorDesc: string; resourceType: string; path?: string | undefined; }': indicatorName, indicatorDesc
+
+[0m [90m 174 |[39m     setIsAiLoading(type)[33m;[39m
+ [90m 175 |[39m     [36mtry[39m {
+[31m[1m>[22m[39m[90m 176 |[39m       [36mconst[39m res [33m=[39m [36mawait[39m getAiFieldSuggestions(type[33m,[39m { [33m...[39mindicatorContext[33m,[39m resourceType[33m:[39m step[33m.[39mresourceType [33m||[39m [32m'Observation'[39m[33m,[39m path[33m:[39m step[33m.[39mpath })[33m;[39m
+ [90m     |[39m                                                     [31m[1m^[22m[39m
+ [90m 177 |[39m       setAiSuggestions(prev [33m=>[39m ({ [33m...[39mprev[33m,[39m [type][33m:[39m res }))[33m;[39m
+ [90m 178 |[39m     } [36mcatch[39m (e) { alert([32m"智慧建議獲取失敗。"[39m)[33m;[39m }
+ [90m 179 |[39m     [36mfinally[39m { setIsAiLoading([36mnull[39m)[33m;[39m }[0m
+Next.js build worker exited with code: 1 and signal: null

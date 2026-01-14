@@ -1,16 +1,16 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { QualityIndicator, CalculationStep, FhirResource, CalculationAction, ValueType } from '../types';
-import { 
-  Plus, Trash2, Database, Sparkles, Activity, MessageSquare, Zap, 
-  Loader2, Link2, Settings2, X, Info, Code, HelpCircle, 
+import {
+  Plus, Trash2, Database, Sparkles, Activity, MessageSquare, Zap,
+  Loader2, Link2, Settings2, X, Info, Code, HelpCircle,
   Layers, ChevronDown, Brain, Calculator, Hash, Tag, Replace, ArrowRight, Minus, Divide, Percent, Search,
   AlertTriangle, Wand2, Sparkle, Users
 } from 'lucide-react';
 import { analyzeSectionDefinition, getAiFieldSuggestions, analyzeFullIndicator } from '../services/gemini';
 
 const RESOURCE_CONFIG: Record<FhirResource, { color: string; icon: any; label: string; paths: { value: string; label: string }[] }> = {
-  Patient: { 
+  Patient: {
     color: 'bg-emerald-500', icon: Database, label: '病人資料 (Patient)',
     paths: [
       { value: 'identifier.value', label: '病患代碼 / 病歷號 (Patient ID)' },
@@ -21,7 +21,7 @@ const RESOURCE_CONFIG: Record<FhirResource, { color: string; icon: any; label: s
       { value: 'deceasedBoolean', label: '死亡狀態 (deceasedBoolean)' }
     ]
   },
-  Observation: { 
+  Observation: {
     color: 'bg-blue-500', icon: Activity, label: '檢驗檢查 (Observation)',
     paths: [
       { value: 'code.coding.code', label: '檢驗項目代碼 (code)' },
@@ -30,28 +30,28 @@ const RESOURCE_CONFIG: Record<FhirResource, { color: string; icon: any; label: s
       { value: 'effectiveDateTime', label: '執行時間 (effectiveDateTime)' }
     ]
   },
-  Condition: { 
+  Condition: {
     color: 'bg-amber-500', icon: Zap, label: '診斷疾病 (Condition)',
     paths: [
       { value: 'code.coding.code', label: '診斷 ICD 代碼 (code)' },
       { value: 'clinicalStatus.coding.code', label: '臨床狀態 (clinicalStatus)' }
     ]
   },
-  Procedure: { 
+  Procedure: {
     color: 'bg-indigo-500', icon: Settings2, label: '醫療處置 (Procedure)',
     paths: [
       { value: 'code.coding.code', label: '醫療處置代碼 (code)' },
       { value: 'status', label: '執行狀態 (status)' }
     ]
   },
-  Encounter: { 
+  Encounter: {
     color: 'bg-rose-500', icon: MessageSquare, label: '就醫事件 (Encounter)',
     paths: [
       { value: 'class.code', label: '就醫類別 (class)' },
       { value: 'status', label: '當前狀態 (status)' }
     ]
   },
-  MedicationRequest: { 
+  MedicationRequest: {
     color: 'bg-purple-500', icon: Sparkles, label: '用藥處方 (MedicationRequest)',
     paths: [
       { value: 'medicationCodeableConcept.coding.code', label: '處方藥品代碼 (medication)' },
@@ -173,7 +173,7 @@ const CriterionRow: React.FC<{
     if (type === 'value' && !step.path) return alert("請先選擇欄位路徑。");
     setIsAiLoading(type);
     try {
-      const res = await getAiFieldSuggestions(type, { ...indicatorContext, resourceType: step.resourceType || 'Observation', path: step.path });
+      const res = await getAiFieldSuggestions(type, { indicatorName: indicatorContext.name, indicatorDesc: indicatorContext.description, resourceType: step.resourceType || 'Observation', path: step.path });
       setAiSuggestions(prev => ({ ...prev, [type]: res }));
     } catch (e) { alert("智慧建議獲取失敗。"); }
     finally { setIsAiLoading(null); }
@@ -197,7 +197,7 @@ const CriterionRow: React.FC<{
                 <span className="text-[9px] font-black text-slate-400 uppercase tracking-widest text-center">{group.label}</span>
                 <div className="flex gap-1.5">
                   {group.actions.map(a => (
-                    <button 
+                    <button
                       key={a} type="button" onClick={() => onUpdate({ action: a })}
                       className={`px-3 py-1.5 rounded-lg text-[10px] font-black transition-all flex items-center gap-1.5 ${step.action === a ? `${ACTION_MAP[a].color} text-white shadow-lg` : 'text-slate-400 hover:bg-slate-50'}`}
                     >
@@ -220,7 +220,7 @@ const CriterionRow: React.FC<{
           {/* 引用來源 (2/12) */}
           <div className="lg:col-span-2 flex flex-col gap-1.5">
             <div className="flex items-center px-1 h-5 overflow-hidden"><label className="text-[12px] font-black text-slate-400 uppercase tracking-widest leading-none">引用來源</label></div>
-            <select 
+            <select
               className="w-full bg-slate-50 border-2 border-transparent rounded-xl px-3 py-2 text-[14px] font-black text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all cursor-pointer h-[64px]"
               value={step.valueType}
               onChange={(e) => onUpdate({ valueType: e.target.value as ValueType, value: '', path: '' })}
@@ -238,7 +238,7 @@ const CriterionRow: React.FC<{
                 {/* 資源類型：寬度足以容納四個中文字 */}
                 <div className="col-span-2 flex flex-col gap-1.5">
                   <div className="flex items-center px-1 h-5 overflow-hidden"><label className="text-[12px] font-black text-slate-400 uppercase tracking-widest leading-none">資源類型</label></div>
-                  <select 
+                  <select
                     className="w-full bg-slate-50 border-2 border-transparent rounded-xl px-2 py-2 text-[14px] font-bold text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all h-[64px]"
                     value={step.resourceType}
                     onChange={(e) => onUpdate({ resourceType: e.target.value as FhirResource, path: '' })}
@@ -308,7 +308,7 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
   const [exDraft, setExDraft] = useState('');
   const [isLoading, setIsLoading] = useState<'num' | 'den' | 'ex' | 'full' | null>(null);
   const [saveAttempted, setSaveAttempted] = useState(false);
-  
+
   const nameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -379,10 +379,10 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
       setTimeout(() => nameInputRef.current?.focus(), 500);
       return;
     }
-    onSave({ 
-      id: initialData?.id || Math.random().toString(36).substr(2, 9), 
-      name, description, numeratorSteps, denominatorSteps, exclusionSteps, 
-      frequency: '每月' 
+    onSave({
+      id: initialData?.id || Math.random().toString(36).substr(2, 9),
+      name, description, numeratorSteps, denominatorSteps, exclusionSteps,
+      frequency: '每月'
     });
   };
 
@@ -399,10 +399,10 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
           </div>
         </div>
         {(sectionKey === 'num' || sectionKey === 'den') && (
-           <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100 animate-pulse">
-             <Wand2 size={16} className="text-indigo-600" />
-             <span className="text-[11px] font-black text-indigo-600 uppercase">智慧建議功能已啟動</span>
-           </div>
+          <div className="flex items-center gap-2 bg-indigo-50 px-4 py-2 rounded-xl border border-indigo-100 animate-pulse">
+            <Wand2 size={16} className="text-indigo-600" />
+            <span className="text-[11px] font-black text-indigo-600 uppercase">智慧建議功能已啟動</span>
+          </div>
         )}
       </div>
       <div className="bg-white/60 p-4 rounded-2xl border-2 border-dashed border-slate-200 space-y-3">
@@ -419,7 +419,7 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
       </div>
       <div className="space-y-3">
         {steps.map((s: any) => (
-          <CriterionRow key={s.id} step={s} availableIndicators={availableIndicators} onRemove={() => setSteps(steps.filter((x: any) => x.id !== s.id))} onUpdate={(u) => setSteps(steps.map((x: any) => x.id === s.id ? {...x, ...u} : x))} indicatorContext={{ name, description }} />
+          <CriterionRow key={s.id} step={s} availableIndicators={availableIndicators} onRemove={() => setSteps(steps.filter((x: any) => x.id !== s.id))} onUpdate={(u) => setSteps(steps.map((x: any) => x.id === s.id ? { ...x, ...u } : x))} indicatorContext={{ name, description }} />
         ))}
         <button type="button" onClick={() => handleAddStep(sectionKey)} className="w-full py-6 border-2 border-dashed border-slate-200 rounded-2xl text-slate-400 font-black hover:bg-white hover:border-indigo-300 hover:text-indigo-500 flex items-center justify-center gap-3 transition-all group text-base shadow-inner">
           <Plus size={20} className="group-hover:rotate-90 transition-transform" /> 手動新增運算步驟
@@ -431,7 +431,7 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
   return (
     <div className="bg-white p-6 md:p-10 rounded-[2.5rem] border-2 border-slate-100 shadow-2xl relative pb-32 mx-[2px] max-w-[calc(100%-4px)] overflow-hidden animate-in fade-in slide-in-from-bottom-8 duration-700">
       <div className="absolute top-0 left-0 w-full h-4 bg-indigo-600"></div>
-      
+
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 mb-12 pt-8 px-4 items-end">
         {/* 指標名稱：加寬至 5 欄位 */}
         <div className="lg:col-span-5 space-y-4">
@@ -439,13 +439,13 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
             指標名稱 <span className="text-rose-500 text-lg font-black">*</span>
           </label>
           <div className="relative">
-            <input 
+            <input
               ref={nameInputRef}
-              type="text" 
-              className={`w-full border-2 rounded-2xl px-6 h-[72px] focus:ring-[8px] outline-none font-black text-xl transition-all ${saveAttempted && !name.trim() ? 'border-rose-300 bg-rose-50 ring-rose-100 focus:ring-rose-200' : 'border-slate-100 bg-slate-50 ring-indigo-50 focus:bg-white focus:ring-indigo-100'}`} 
-              value={name} 
-              onChange={(e) => setName(e.target.value)} 
-              placeholder="名稱..." 
+              type="text"
+              className={`w-full border-2 rounded-2xl px-6 h-[72px] focus:ring-[8px] outline-none font-black text-xl transition-all ${saveAttempted && !name.trim() ? 'border-rose-300 bg-rose-50 ring-rose-100 focus:ring-rose-200' : 'border-slate-100 bg-slate-50 ring-indigo-50 focus:bg-white focus:ring-indigo-100'}`}
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              placeholder="名稱..."
             />
             {saveAttempted && !name.trim() && (
               <div className="absolute -bottom-8 left-6 flex items-center gap-2 text-rose-500 text-[10px] font-bold animate-in slide-in-from-top-2">
@@ -458,15 +458,15 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
         <div className="lg:col-span-7 space-y-4">
           <label className="block text-2xl font-black text-slate-900 tracking-tight ml-2">指標功能描述</label>
           <div className="flex gap-4 h-[72px]">
-            <input 
-              type="text" 
-              className="flex-1 border-2 rounded-2xl px-6 focus:ring-[8px] focus:ring-indigo-50 outline-none border-slate-100 bg-slate-50 font-black text-xl transition-all focus:bg-white" 
-              value={description} 
-              onChange={(e) => setDescription(e.target.value)} 
-              placeholder="描述臨床監測目標與核心運算邏輯..." 
+            <input
+              type="text"
+              className="flex-1 border-2 rounded-2xl px-6 focus:ring-[8px] focus:ring-indigo-50 outline-none border-slate-100 bg-slate-50 font-black text-xl transition-all focus:bg-white"
+              value={description}
+              onChange={(e) => setDescription(e.target.value)}
+              placeholder="描述臨床監測目標與核心運算邏輯..."
             />
-            <button 
-              type="button" 
+            <button
+              type="button"
               onClick={handleFullIndicatorSuggest}
               disabled={isLoading === 'full'}
               className="px-8 bg-indigo-600 text-white rounded-2xl font-black text-sm shadow-xl hover:bg-indigo-700 transition flex items-center gap-3 disabled:opacity-50 shrink-0 group h-full"

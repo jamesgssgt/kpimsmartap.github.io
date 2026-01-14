@@ -241,7 +241,7 @@ export default async function FavoritesPage(props: {
 
                     {/* Abnormal Table */}
                     <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems} />
+                        <AbnormalTable items={abnormalItems} title="異常病患清單" />
                     </div>
                 </div>
             </div>

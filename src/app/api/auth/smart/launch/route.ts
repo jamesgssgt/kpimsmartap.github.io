@@ -3,7 +3,7 @@ import { SMART_CONFIG, getSmartMetadata } from "@/utils/smart-conf";
 import { cookies } from "next/headers";
 import crypto from "node:crypto";
 
-export async function GET(request: NextRequest) {
+try {
     const searchParams = request.nextUrl.searchParams;
     const iss = searchParams.get("iss") || SMART_CONFIG.iss;
     const launch = searchParams.get("launch");
@@ -16,8 +16,8 @@ export async function GET(request: NextRequest) {
     const state = Math.random().toString(36).substring(7);
 
     // PKCE: Generate code_verifier and code_challenge
-    // Note: Node.js 18+ has global crypto
-    const code_verifier = Buffer.from(crypto.getRandomValues(new Uint8Array(32))).toString('base64url');
+    // Fix: Use crypto.randomBytes for Node.js environment instead of Web Crypto's getRandomValues on the module
+    const code_verifier = crypto.randomBytes(32).toString('base64url');
     const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
     // 3. Construct URL
@@ -29,7 +29,8 @@ export async function GET(request: NextRequest) {
         aud: iss,
         state: state,
         code_challenge: code_challenge,
-        code_challenge_method: "S256"
+        code_challenge_method: "S256",
+        scope: SMART_CONFIG.scope,
     });
 
     if (launch) {
@@ -44,4 +45,8 @@ export async function GET(request: NextRequest) {
 
     // 5. Redirect
     return NextResponse.redirect(`${authUrl}?${params.toString()}`);
+} catch (error) {
+    console.error("SMART Launch Error:", error);
+    return new NextResponse(`SMART Launch Error: ${String(error)}`, { status: 500 });
+}
 }
