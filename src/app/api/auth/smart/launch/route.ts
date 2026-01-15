@@ -80,8 +80,10 @@ export async function GET(request: NextRequest) {
             fullAuthUrl += `&launch=${rawLaunch}`;
         }
         console.log("SMART Launch Debug:", {
+            requestUrl: request.url, // CRITICAL: See exact incoming URL
             iss,
-            launch,
+            launch, // Decoded via searchParams (line 10)
+            rawLaunch, // Extracted via Regex
             clientId: SMART_CONFIG.clientId,
             redirectUri,
             scope: SMART_CONFIG.scope,
