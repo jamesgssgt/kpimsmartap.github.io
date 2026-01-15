@@ -22,11 +22,12 @@ export async function GET(request: NextRequest) {
         const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
         // 3. Construct URL
+        const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
         const params = new URLSearchParams({
             response_type: "code",
             client_id: SMART_CONFIG.clientId,
             // Use dynamic redirect URI based on the current request origin (supports Vercel Preview/Production)
-            redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
+            redirect_uri: redirectUri,
             aud: iss,
             state: state,
             code_challenge: code_challenge,
@@ -38,6 +39,17 @@ export async function GET(request: NextRequest) {
             params.append("launch", launch);
         }
 
+        const fullAuthUrl = `${authUrl}?${params.toString()}`;
+        console.log("SMART Launch Debug:", {
+            iss,
+            launch,
+            clientId: SMART_CONFIG.clientId,
+            redirectUri,
+            scope: SMART_CONFIG.scope,
+            authEndpoint: authUrl,
+            fullUrl: fullAuthUrl
+        });
+
         // 4. Store state and iss in cookie for callback verification
         const cookieStore = await cookies();
         cookieStore.set("smart_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
@@ -45,7 +57,7 @@ export async function GET(request: NextRequest) {
         cookieStore.set("smart_code_verifier", code_verifier, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
 
         // 5. Redirect
-        return NextResponse.redirect(`${authUrl}?${params.toString()}`);
+        return NextResponse.redirect(fullAuthUrl);
     } catch (error) {
         console.error("SMART Launch Error:", error);
         return new NextResponse(`SMART Launch Error: ${String(error)}`, { status: 500 });
