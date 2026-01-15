@@ -37,14 +37,20 @@ export async function GET(request: NextRequest) {
         // 3. Construct URL
         const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
 
-        // FIX: FORCE STANDALONE LAUNCH
-        // The Sandbox is rejecting the 'launch' token with "Unexpected end of JSON input".
-        // To unblock the user, we ignore the incoming 'launch' parameter completely
-        // and force a Standalone Launch (which triggers the Patient Picker UI).
+        // RAW PASS-THROUGH LOGIC:
+        // Attempting to decode/re-encode the launch param might be corrupting it (e.g. + vs space).
+        // We will extract the RAW 'launch' string from the URL and pass it exactly as received.
+        const rawLaunchMatch = request.url.match(/[?&]launch=([^&]+)/);
+        let rawLaunch = rawLaunchMatch ? rawLaunchMatch[1] : null;
+
+        if (iss && iss.includes("hapi.fhir.tw")) {
+            // Still kill it for Hapi
+            rawLaunch = null;
+        }
 
         let scope = SMART_CONFIG.scope;
 
-        if (!launch) {
+        if (!rawLaunch) {
             // Standalone Mode (No Launch ID):
             // Ensure we ask for 'launch/patient' to trigger the picker.
             if (scope.includes("launch") && !scope.includes("launch/patient")) {
@@ -52,7 +58,7 @@ export async function GET(request: NextRequest) {
             }
         } else {
             // EHR Mode (With Launch ID):
-            // Keep generic 'launch' scope which binds to the launch id.
+            // Keep generic 'launch' scope.
         }
 
         const params = new URLSearchParams({
@@ -66,12 +72,13 @@ export async function GET(request: NextRequest) {
             scope: scope,
         });
 
-        // Only append launch if we actually have one (and it wasn't nulled by hijack)
-        if (launch) {
-            params.append("launch", launch);
-        }
+        // Do NOT add launch to params (it re-encodes).
+        // instead append rawLaunch manually below.
 
-        const fullAuthUrl = `${authUrl}?${params.toString()}`;
+        let fullAuthUrl = `${authUrl}?${params.toString()}`;
+        if (rawLaunch) {
+            fullAuthUrl += `&launch=${rawLaunch}`;
+        }
         console.log("SMART Launch Debug:", {
             iss,
             launch,
