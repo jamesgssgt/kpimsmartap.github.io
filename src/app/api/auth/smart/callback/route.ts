@@ -8,9 +8,14 @@ export async function GET(request: NextRequest) {
     const code = searchParams.get("code");
     const state = searchParams.get("state");
     const error = searchParams.get("error");
+    const errorDescription = searchParams.get("error_description");
 
     if (error) {
-        return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error)}&details=auth_failed`, request.url));
+        const debugInfo = JSON.stringify({
+            error,
+            description: errorDescription || "No description provided by Auth Server"
+        });
+        return NextResponse.redirect(new URL(`/login?error=${encodeURIComponent(error)}&details=${encodeURIComponent(debugInfo)}`, request.url));
     }
 
     const cookieStore = await cookies();
