@@ -135,6 +135,17 @@ function LoginContent() {
                         >
                             關閉 (Close)
                         </Button>
+                        <Button
+                            variant="outline"
+                            className="w-full"
+                            onClick={() => {
+                                setView("login");
+                                // Clear error params from URL without reload
+                                window.history.replaceState({}, "", "/login");
+                            }}
+                        >
+                            改用帳號登入 (Manual Login)
+                        </Button>
                     </CardContent>
                 </Card>
             </div>

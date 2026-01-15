@@ -51,6 +51,12 @@ export async function GET(request: NextRequest) {
             fullUrl: fullAuthUrl
         });
 
+        // 4. Store state and iss in cookie for callback verification
+        const cookieStore = await cookies();
+        cookieStore.set("smart_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+        cookieStore.set("smart_iss", iss, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+        cookieStore.set("smart_code_verifier", code_verifier, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+
         if (debug === "true") {
             return new NextResponse(`
                 <html>
@@ -81,12 +87,6 @@ export async function GET(request: NextRequest) {
                 </html>
             `, { headers: { "Content-Type": "text/html" } });
         }
-
-        // 4. Store state and iss in cookie for callback verification
-        const cookieStore = await cookies();
-        cookieStore.set("smart_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-        cookieStore.set("smart_iss", iss, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-        cookieStore.set("smart_code_verifier", code_verifier, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
 
         // 5. Redirect
         return NextResponse.redirect(fullAuthUrl);
