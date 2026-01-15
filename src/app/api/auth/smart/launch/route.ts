@@ -37,14 +37,19 @@ export async function GET(request: NextRequest) {
         // 3. Construct URL
         const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
 
-        // Scope Logic:
-        // If 'launch' param is present -> EHR Launch -> use 'launch' scope
-        // If 'launch' param is MISSING -> Standalone Launch -> use 'launch/patient' scope
-        // This prevents "Unexpected end of JSON input" error when requesting 'launch' scope without a launch id.
+        // FIX: FORCE STANDALONE LAUNCH
+        // The Sandbox is rejecting the 'launch' token with "Unexpected end of JSON input".
+        // To unblock the user, we ignore the incoming 'launch' parameter completely
+        // and force a Standalone Launch (which triggers the Patient Picker UI).
+
         let scope = SMART_CONFIG.scope;
-        if (!launch) {
+        // Ensure we ask for 'launch/patient' to trigger the picker, replacing generic 'launch' if present
+        if (scope.includes("launch") && !scope.includes("launch/patient")) {
             scope = scope.replace("launch", "launch/patient");
         }
+
+        // Wipe the launch param to ensure we don't send the broken token
+        launch = null;
 
         const params = new URLSearchParams({
             response_type: "code",
@@ -57,9 +62,7 @@ export async function GET(request: NextRequest) {
             scope: scope,
         });
 
-        if (launch) {
-            params.append("launch", launch);
-        }
+        // if (launch) { ... }  <-- Removed, never append launch token
 
         const fullAuthUrl = `${authUrl}?${params.toString()}`;
         console.log("SMART Launch Debug:", {
