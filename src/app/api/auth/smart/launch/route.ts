@@ -32,16 +32,25 @@ export async function GET(request: NextRequest) {
 
         // 3. Construct URL
         const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
+
+        // Scope Logic:
+        // If 'launch' param is present -> EHR Launch -> use 'launch' scope
+        // If 'launch' param is MISSING -> Standalone Launch -> use 'launch/patient' scope
+        // This prevents "Unexpected end of JSON input" error when requesting 'launch' scope without a launch id.
+        let scope = SMART_CONFIG.scope;
+        if (!launch) {
+            scope = scope.replace("launch", "launch/patient");
+        }
+
         const params = new URLSearchParams({
             response_type: "code",
             client_id: SMART_CONFIG.clientId,
-            // Use dynamic redirect URI based on the current request origin (supports Vercel Preview/Production)
             redirect_uri: redirectUri,
             aud: iss,
             state: state,
             code_challenge: code_challenge,
             code_challenge_method: "S256",
-            scope: SMART_CONFIG.scope,
+            scope: scope,
         });
 
         if (launch) {
