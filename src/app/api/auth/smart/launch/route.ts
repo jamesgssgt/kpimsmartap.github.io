@@ -43,13 +43,17 @@ export async function GET(request: NextRequest) {
         // and force a Standalone Launch (which triggers the Patient Picker UI).
 
         let scope = SMART_CONFIG.scope;
-        // Ensure we ask for 'launch/patient' to trigger the picker, replacing generic 'launch' if present
-        if (scope.includes("launch") && !scope.includes("launch/patient")) {
-            scope = scope.replace("launch", "launch/patient");
-        }
 
-        // Wipe the launch param to ensure we don't send the broken token
-        launch = null;
+        if (!launch) {
+            // Standalone Mode (No Launch ID):
+            // Ensure we ask for 'launch/patient' to trigger the picker.
+            if (scope.includes("launch") && !scope.includes("launch/patient")) {
+                scope = scope.replace("launch", "launch/patient");
+            }
+        } else {
+            // EHR Mode (With Launch ID):
+            // Keep generic 'launch' scope which binds to the launch id.
+        }
 
         const params = new URLSearchParams({
             response_type: "code",
@@ -62,7 +66,10 @@ export async function GET(request: NextRequest) {
             scope: scope,
         });
 
-        // if (launch) { ... }  <-- Removed, never append launch token
+        // Only append launch if we actually have one (and it wasn't nulled by hijack)
+        if (launch) {
+            params.append("launch", launch);
+        }
 
         const fullAuthUrl = `${authUrl}?${params.toString()}`;
         console.log("SMART Launch Debug:", {
