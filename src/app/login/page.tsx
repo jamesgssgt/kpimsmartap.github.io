@@ -118,7 +118,7 @@ return (
     <div className="min-h-screen flex items-center justify-center bg-muted/20">
         <Card className="w-[400px]">
             <CardHeader>
-                <CardTitle>KPIM Login</CardTitle>
+                <CardTitle>KPIM Login (v2)</CardTitle>
                 <CardDescription>Sign in to access KPI Dashboard</CardDescription>
             </CardHeader>
             <CardContent className="space-y-4">
