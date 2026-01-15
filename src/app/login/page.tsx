@@ -59,7 +59,7 @@ function LoginContent() {
         const errorParam = searchParams.get("error");
         if (errorParam) {
             setView("error");
-            setErrorMessage("找不到驗證伺服器或帳號錯誤");
+            setErrorMessage(errorParam);
             return;
         }
 
@@ -122,8 +122,11 @@ function LoginContent() {
                         <CardDescription>Authentication Error</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <div className="p-4 bg-destructive/10 text-destructive rounded-md">
-                            {errorMessage || "找不到驗證伺服器或帳號錯誤"}
+                        <div className="p-4 bg-destructive/10 text-destructive rounded-md whitespace-pre-wrap break-words">
+                            <p className="font-bold">{errorMessage || "Authentication Error"}</p>
+                            {searchParams.get("details") && (
+                                <p className="text-sm mt-2 opacity-80">{decodeURIComponent(searchParams.get("details")!)}</p>
+                            )}
                         </div>
                         <Button
                             variant="default"

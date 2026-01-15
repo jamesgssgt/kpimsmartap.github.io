@@ -1,6 +1,6 @@
 export const SMART_CONFIG = {
     // In a real app, these should be environment variables
-    clientId: process.env.SMART_CLIENT_ID || "my-postop-app",
+    clientId: process.env.SMART_CLIENT_ID || "KPIM_SMART_AP",
 
     // Auth Type: 'symmetric' (Client Secret) or 'asymmetric' (Private Key JWT)
     authType: (process.env.SMART_AUTH_TYPE as 'symmetric' | 'asymmetric') || 'symmetric',

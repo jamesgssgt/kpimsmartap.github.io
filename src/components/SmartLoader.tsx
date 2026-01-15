@@ -25,7 +25,7 @@ export default function SmartLoader({ children }: { children: React.ReactNode })
                 const defaultAuth = process.env.NEXT_PUBLIC_DEFAULT_AUTH;
                 const smartAuthCookie = await getCookie("smart_authenticated");
 
-                if (defaultAuth === "1" && smartAuthCookie === "1") {
+                if (smartAuthCookie === "1" || (defaultAuth === "1" && smartAuthCookie === "1")) {
                     console.log("SMART Auth detected, signing in anonymously to Supabase...");
                     const { error: anonError } = await supabase.auth.signInAnonymously();
                     if (!anonError) {
