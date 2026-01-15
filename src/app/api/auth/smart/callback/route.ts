@@ -94,23 +94,28 @@ export async function GET(request: NextRequest) {
         }
 
     } else {
-        // Fix for "invalid_client" on SMART Sandbox:
-        // Pure body-only auth failed. We will try "Basic Auth" with Client ID and EMPTY secret.
-        // This is a common pattern for "Public Clients acting like Confidential".
-        // Format: Basic base64(client_id:)  <-- Note the colon
-        const authString = Buffer.from(`${SMART_CONFIG.clientId}:`).toString('base64');
-        headers["Authorization"] = `Basic ${authString}`;
-
-        // Remove client_id from body since we are using header (Spec says don't duplicate)
-        body.delete("client_id");
+        // Fix: Use Standard Public Client Auth (Body Only)
+        // No Authorization header. client_id in body.
+        // We explicitly ensure client_id is in the body below.
+        if (!body.has("client_id")) {
+            body.append("client_id", SMART_CONFIG.clientId);
+        }
     }
 
     try {
-        console.log("Exchanging code for token...", { tokenUrl, clientId: SMART_CONFIG.clientId, hasSecret: !!headers["Authorization"] });
+        console.log("Exchanging code for token...", {
+            tokenUrl,
+            clientId: SMART_CONFIG.clientId,
+            hasAuthHeader: !!headers["Authorization"],
+            bodyParams: Array.from(body.keys()) // Log keys to check presence
+        });
 
         const res = await fetch(tokenUrl, {
             method: "POST",
-            headers,
+            headers: {
+                ...headers,
+                "Accept": "application/json"
+            },
             body,
         });
 
