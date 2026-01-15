@@ -120,8 +120,14 @@ export async function GET(request: NextRequest) {
             `, { headers: { "Content-Type": "text/html" } });
         }
 
-        // 5. Redirect
-        return NextResponse.redirect(fullAuthUrl);
+        // 5. Redirect with Cache Busting
+        // We append a timestamp to ensure the browser doesn't cache the 307/308 redirect
+        // which might contain the OLD url with the broken 'launch' param.
+        const bustUrl = `${fullAuthUrl}&_t=${Date.now()}`;
+
+        const response = NextResponse.redirect(bustUrl);
+        response.headers.set("Cache-Control", "no-store, max-age=0");
+        return response;
     } catch (error) {
         console.error("SMART Launch Error:", error);
         return new NextResponse(`SMART Launch Error: ${String(error)}`, { status: 500 });
