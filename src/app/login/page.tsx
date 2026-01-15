@@ -119,11 +119,24 @@ function LoginContent() {
                         <CardDescription>Authentication Error</CardDescription>
                     </CardHeader>
                     <CardContent className="space-y-4">
-                        <div className="p-4 bg-destructive/10 text-destructive rounded-md whitespace-pre-wrap break-words">
+                        <div className="p-4 bg-destructive/10 text-destructive rounded-md whitespace-pre-wrap break-words text-left">
                             <p className="font-bold">{errorMessage || "Authentication Error"}</p>
-                            {searchParams.get("details") && (
-                                <p className="text-sm mt-2 opacity-80">{decodeURIComponent(searchParams.get("details")!)}</p>
-                            )}
+                            {searchParams.get("details") && (() => {
+                                const details = decodeURIComponent(searchParams.get("details")!);
+                                try {
+                                    const json = JSON.parse(details);
+                                    return (
+                                        <div className="mt-2 text-xs opacity-90 overflow-auto max-h-[200px]">
+                                            <p className="font-semibold mb-1">Debug Details:</p>
+                                            <pre className="p-2 bg-white/50 rounded border border-destructive/20 text-[10px] leading-tight font-mono">
+                                                {JSON.stringify(json, null, 2)}
+                                            </pre>
+                                        </div>
+                                    );
+                                } catch (e) {
+                                    return <p className="text-sm mt-2 opacity-80">{details}</p>;
+                                }
+                            })()}
                         </div>
                         <Button
                             variant="default"

@@ -17,7 +17,12 @@ export async function GET(request: NextRequest) {
     const storedState = cookieStore.get("smart_state")?.value;
 
     if (!state || state !== storedState) {
-        return NextResponse.redirect(new URL("/login?error=invalid_state", request.url));
+        const debugInfo = JSON.stringify({
+            error: "State Mismatch",
+            received_state: state,
+            stored_state: storedState ? storedState.substring(0, 5) + "..." : "null"
+        });
+        return NextResponse.redirect(new URL(`/login?error=invalid_state&details=${encodeURIComponent(debugInfo)}`, request.url));
     }
 
     // Clear state cookie
@@ -102,11 +107,23 @@ export async function GET(request: NextRequest) {
             body,
         });
 
-        const tokenResponse = await res.json();
-        console.log("Token Response:", res.status, res.ok ? "OK" : JSON.stringify(tokenResponse));
+        const tokenText = await res.text();
+        let tokenResponse;
+        try {
+            tokenResponse = JSON.parse(tokenText);
+        } catch (e) {
+            tokenResponse = { raw: tokenText };
+        }
+
+        console.log("Token Response:", res.status, res.ok ? "OK" : tokenText);
 
         if (!res.ok) {
-            return NextResponse.redirect(new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(JSON.stringify(tokenResponse))}`, request.url));
+            const debugInfo = JSON.stringify({
+                status: res.status,
+                statusText: res.statusText,
+                response: tokenResponse
+            }, null, 2);
+            return NextResponse.redirect(new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(debugInfo)}`, request.url));
         }
 
         // Success! We have the token.
