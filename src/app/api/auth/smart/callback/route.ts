@@ -44,7 +44,7 @@ export async function GET(request: NextRequest) {
         code: code!,
         // Use dynamic redirect URI to match the one sent in the launch request
         redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
-        // client_id: SMART_CONFIG.clientId, // If using Basic Auth, id is in header usually, but some require both
+        client_id: SMART_CONFIG.clientId,
     });
 
     if (codeVerifier) {
@@ -84,13 +84,18 @@ export async function GET(request: NextRequest) {
         }
 
     } else {
-        // Symmetric Client Authentication
-        // Using Basic Auth as it's standard for Confidential Clients
-        const authString = Buffer.from(`${SMART_CONFIG.clientId}:${SMART_CONFIG.clientSecret}`).toString('base64');
-        headers["Authorization"] = `Basic ${authString}`;
+        // Symmetric Client Authentication for Confidential Clients
+        // valid secret check: ensure it's not the default dummy value
+        if (SMART_CONFIG.clientSecret && SMART_CONFIG.clientSecret !== "my-client-secret") {
+            const authString = Buffer.from(`${SMART_CONFIG.clientId}:${SMART_CONFIG.clientSecret}`).toString('base64');
+            headers["Authorization"] = `Basic ${authString}`;
+        }
+        // If it IS "my-client-secret", we assume Public Client (PKCE only) and send no Secret.
     }
 
     try {
+        console.log("Exchanging code for token...", { tokenUrl, clientId: SMART_CONFIG.clientId, hasSecret: !!headers["Authorization"] });
+
         const res = await fetch(tokenUrl, {
             method: "POST",
             headers,
@@ -98,6 +103,7 @@ export async function GET(request: NextRequest) {
         });
 
         const tokenResponse = await res.json();
+        console.log("Token Response:", res.status, res.ok ? "OK" : JSON.stringify(tokenResponse));
 
         if (!res.ok) {
             return NextResponse.redirect(new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(JSON.stringify(tokenResponse))}`, request.url));
