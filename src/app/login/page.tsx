@@ -209,9 +209,15 @@ function LoginContent() {
                             {isLoading ? "Signing in..." : "Sign in"}
                         </Button>
                     </div>
+
+                    <div className="mt-6 pt-4 border-t text-xs text-muted-foreground">
+                        <p>Debug Info:</p>
+                        <p>Default Auth: {process.env.NEXT_PUBLIC_DEFAULT_AUTH}</p>
+                        <p>Environment: {process.env.NODE_ENV}</p>
+                    </div>
                 </CardContent>
             </Card>
-        </div>
+        </div >
     );
 }
 
