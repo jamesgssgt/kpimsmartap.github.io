@@ -93,12 +93,15 @@ export async function GET(request: NextRequest) {
 
         // 4. Store state and iss in cookie for callback verification
         const cookieStore = await cookies();
+        // Cookie Options for maximum reliability during redirect
         const cookieOptions = {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            // SameSite=None REQUIRED for cross-site redirects in some browsers/flows
+            // Secure must be true if SameSite=None
+            secure: true,
             path: "/",
-            sameSite: "lax" as const,
-            maxAge: 600 // 10 minutes
+            sameSite: "none" as const,
+            maxAge: 1800 // 30 minutes
         };
 
         cookieStore.set("smart_state", state, cookieOptions);
