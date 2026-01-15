@@ -96,11 +96,17 @@ export async function GET(request: NextRequest) {
     } else {
         // Symmetric Client Authentication for Confidential Clients
         // valid secret check: ensure it's not the default dummy value
-        if (SMART_CONFIG.clientSecret && SMART_CONFIG.clientSecret !== "my-client-secret") {
-            const authString = Buffer.from(`${SMART_CONFIG.clientId}:${SMART_CONFIG.clientSecret}`).toString('base64');
-            headers["Authorization"] = `Basic ${authString}`;
-        }
-        // If it IS "my-client-secret", we assume Public Client (PKCE only) and send no Secret.
+        /* 
+        FIX: 401 Unauthorized / invalid_client
+        The SMART Sandbox often treats any Authorization header as a sign of a Confidential Client.
+        Since we are a Public Client (using PKCE), we MUST NOT send the Authorization header 
+        if we don't have a real secret.
+        We force PUBLIC CLIENT mode here by bypassing the Auth header addition.
+        */
+        // if (SMART_CONFIG.clientSecret && SMART_CONFIG.clientSecret !== "my-client-secret") {
+        //     const authString = Buffer.from(`${SMART_CONFIG.clientId}:${SMART_CONFIG.clientSecret}`).toString('base64');
+        //     headers["Authorization"] = `Basic ${authString}`;
+        // }
     }
 
     try {
