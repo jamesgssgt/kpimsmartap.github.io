@@ -34,6 +34,9 @@
     1.  **納入條件 (Inclusion)**：
         *   **住院案件**: `Encounter.class = 'IMP'` (Inpatient)。
         *   **手術代碼**: `Procedure.code` 位於 ICD-10-PCS `00.30-86.99` 範圍內 (參考值集: `PCS_Surgery_VS`)。
+        *   **手術處置 (Surgical)**:
+            *   `Procedure.category` (使用代碼比對) = `surgical`
+            *   `Procedure.status` = `completed`
         *   **執行地點**: `Procedure.location` 需為手術室 (OR/CATH/SECT)。
     2.  **排除條件 (Exclusions)**：
         *   **剖腹產**: `Procedure.code` 屬於 `C_Section_Exclusion_VS` (如 ICD-9 74.x 等轉換碼)。

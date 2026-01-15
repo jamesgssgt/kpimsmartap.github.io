@@ -61,9 +61,17 @@ export async function GET(request: NextRequest) {
 
         // 4. Store state and iss in cookie for callback verification
         const cookieStore = await cookies();
-        cookieStore.set("smart_state", state, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-        cookieStore.set("smart_iss", iss, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
-        cookieStore.set("smart_code_verifier", code_verifier, { httpOnly: true, secure: process.env.NODE_ENV === "production", path: "/" });
+        const cookieOptions = {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            path: "/",
+            sameSite: "lax" as const,
+            maxAge: 600 // 10 minutes
+        };
+
+        cookieStore.set("smart_state", state, cookieOptions);
+        cookieStore.set("smart_iss", iss, cookieOptions);
+        cookieStore.set("smart_code_verifier", code_verifier, cookieOptions);
 
         if (debug === "true") {
             return new NextResponse(`
