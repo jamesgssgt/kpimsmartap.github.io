@@ -17,7 +17,7 @@ export const SMART_CONFIG = {
     signingAlg: process.env.SMART_SIGNING_ALG || "RS384",
 
     iss: process.env.SMART_ISS || "https://hapi.fhir.tw/fhir",
-    scope: process.env.SMART_SCOPE || "launch patient/Encounter.read patient/Patient.read openid profile",
+    scope: "launch patient/Encounter.read patient/Patient.read openid profile",
 
     redirectUri: typeof window !== "undefined"
         ? window.location.origin + "/api/auth/smart/callback"
