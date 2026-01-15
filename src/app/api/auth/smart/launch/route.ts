@@ -8,6 +8,7 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         const iss = searchParams.get("iss") || SMART_CONFIG.iss;
         const launch = searchParams.get("launch");
+        const debug = searchParams.get("debug");
 
         // 1. Get Metadata to find authorization_endpoint
         const metadata = await getSmartMetadata(iss);
@@ -49,6 +50,37 @@ export async function GET(request: NextRequest) {
             authEndpoint: authUrl,
             fullUrl: fullAuthUrl
         });
+
+        if (debug === "true") {
+            return new NextResponse(`
+                <html>
+                    <head>
+                        <title>SMART Launch Debug</title>
+                        <style>
+                            body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; line-height: 1.6; }
+                            h1 { color: #cc0000; }
+                            pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
+                            .btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
+                            .btn:hover { background: #0056b3; }
+                        </style>
+                    </head>
+                    <body>
+                        <h1>SMART Launch Debug Mode</h1>
+                        <p><strong>ISS:</strong> ${iss}</p>
+                        <p><strong>Launch ID:</strong> ${launch}</p>
+                        <p><strong>Client ID:</strong> ${SMART_CONFIG.clientId}</p>
+                        <p><strong>Redirect URI:</strong> ${redirectUri}</p>
+                        <p><strong>Scope:</strong> ${SMART_CONFIG.scope}</p>
+                        <p><strong>Auth Endpoint:</strong> ${authUrl}</p>
+                        
+                        <h3>Generated Authorization URL</h3>
+                        <pre>${fullAuthUrl}</pre>
+
+                        <a href="${fullAuthUrl}" class="btn">Proceed to Connect</a>
+                    </body>
+                </html>
+            `, { headers: { "Content-Type": "text/html" } });
+        }
 
         // 4. Store state and iss in cookie for callback verification
         const cookieStore = await cookies();
