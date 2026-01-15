@@ -7,7 +7,7 @@ export async function GET(request: NextRequest) {
     try {
         const searchParams = request.nextUrl.searchParams;
         let iss = searchParams.get("iss") || SMART_CONFIG.iss; // Changed to let to allow modification
-        const launch = searchParams.get("launch");
+        let launch = searchParams.get("launch"); // Changed to let
         const debug = searchParams.get("debug");
 
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
@@ -16,6 +16,10 @@ export async function GET(request: NextRequest) {
         if (iss && iss.includes("hapi.fhir.tw")) {
             console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
             iss = "https://launch.smarthealthit.org/v/r4/fhir";
+
+            // CRITICAL FIX: The 'launch' context from keys is bound to hapi.fhir.tw.
+            // We cannot use it on the Sandbox. We must drop it to force a Standalone Launch.
+            launch = null;
         }
 
         // 1. Get Metadata to find authorization_endpoint
