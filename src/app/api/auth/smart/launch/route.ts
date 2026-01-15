@@ -6,9 +6,17 @@ import crypto from "node:crypto";
 export async function GET(request: NextRequest) {
     try {
         const searchParams = request.nextUrl.searchParams;
-        const iss = searchParams.get("iss") || SMART_CONFIG.iss;
+        let iss = searchParams.get("iss") || SMART_CONFIG.iss; // Changed to let to allow modification
         const launch = searchParams.get("launch");
         const debug = searchParams.get("debug");
+
+        // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
+        // The user is likely selecting hapi.fhir.tw in the launcher, but that server doesn't support SMART Auth.
+        // We force it to the Sandbox to allow the login flow to complete.
+        if (iss && iss.includes("hapi.fhir.tw")) {
+            console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
+            iss = "https://launch.smarthealthit.org/v/r4/fhir";
+        }
 
         // 1. Get Metadata to find authorization_endpoint
         const metadata = await getSmartMetadata(iss);
