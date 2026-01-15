@@ -16,7 +16,8 @@ export const SMART_CONFIG = {
     // Algorithm to sign the JWT (usually RS384 or ES384 for FHIR, but RS256 is common default)
     signingAlg: process.env.SMART_SIGNING_ALG || "RS384",
 
-    iss: process.env.SMART_ISS || "https://hapi.fhir.tw/fhir",
+    // Fix: Use SMART Sandbox FHIR Server by default since hapi.fhir.tw doesn't support SMART Auth
+    iss: process.env.SMART_ISS || "https://launch.smarthealthit.org/v/r4/fhir",
     scope: "launch patient/Encounter.read patient/Patient.read openid profile",
 
     redirectUri: typeof window !== "undefined"
