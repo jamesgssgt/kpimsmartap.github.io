@@ -16,8 +16,8 @@ export const SMART_CONFIG = {
     // Algorithm to sign the JWT (usually RS384 or ES384 for FHIR, but RS256 is common default)
     signingAlg: process.env.SMART_SIGNING_ALG || "RS384",
 
-    iss: process.env.SMART_ISS || "https://hapi.fhir.tw",
-    scope: process.env.SMART_SCOPE || "launch patient/Encounter.rs patient/Patient.read openid profile",
+    iss: process.env.SMART_ISS || "https://hapi.fhir.tw/fhir",
+    scope: process.env.SMART_SCOPE || "launch patient/Encounter.read patient/Patient.read openid profile",
 
     redirectUri: typeof window !== "undefined"
         ? window.location.origin + "/api/auth/smart/callback"
@@ -26,14 +26,48 @@ export const SMART_CONFIG = {
 
 // Helper to get token endpoint (simplified discovery)
 export async function getSmartMetadata(iss: string) {
+    // Helper to safe fetch
+    const safeFetch = async (url: string) => {
+        let res = await fetch(url);
+
+        // If 404, try appending /fhir to the base if likely missing
+        if (!res.ok && res.status === 404 && !url.includes("/fhir/")) {
+            // Basic heuristic: insert /fhir before .well-known or metadata
+            const newUrl = url.replace(/(\.well-known\/smart-configuration|metadata)/, "fhir/$1");
+            console.log(`Initial fetch 404, retrying with: ${newUrl}`);
+            const retryRes = await fetch(newUrl);
+            if (retryRes.ok) {
+                res = retryRes;
+            }
+        }
+
+        if (!res.ok) {
+            throw new Error(`Fetch failed: ${res.status} for ${url}`);
+        }
+
+        const text = await res.text();
+        try {
+            return JSON.parse(text);
+        } catch (e) {
+            console.error(`Invalid JSON from ${url} (or retry):`, text.substring(0, 50));
+            throw new Error(`Invalid JSON response`);
+        }
+    };
+
     try {
-        const wellKnown = await fetch(`${iss}/.well-known/smart-configuration`).then(r => r.json());
+        const wellKnown = await safeFetch(`${iss}/.well-known/smart-configuration`);
         return wellKnown;
     } catch (e) {
-        // Fallback for some servers or if well-known missing, try conformance
-        const capability = await fetch(`${iss}/metadata`).then(r => r.json());
-        // Parse capability statement logic would go here
-        // For now returning mock or assuming well-known works for Sandbox
-        return null;
+        console.warn("Well-known lookup failed, trying metadata...", e);
+        try {
+            // Fallback for some servers or if well-known missing, try conformance
+            const capability = await safeFetch(`${iss}/metadata`);
+            // Parse capability statement logic would go here
+            // For now returning mock or assuming well-known works for Sandbox
+            return null;
+        } catch (e2) {
+            console.error("Metadata lookup failed", e2);
+            return null;
+        }
     }
 }
