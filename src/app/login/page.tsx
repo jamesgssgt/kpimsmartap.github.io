@@ -28,8 +28,9 @@ function LoginContent() {
     const supabase = createClient();
 
     const handleStandaloneLaunch = () => {
-        // Redirect to external SMART App Launcher for testing EHR Launch flow
-        window.location.href = "https://launch.smarthealthit.org";
+        // Redirect to external SMART App Launcher (configured via env)
+        const launcherUrl = process.env.NEXT_PUBLIC_SMART_LAUNCHER_URL || "https://launch.smarthealthit.org";
+        window.location.href = launcherUrl;
     };
 
     const handleClose = () => {
