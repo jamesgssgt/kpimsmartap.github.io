@@ -21,8 +21,9 @@ export async function GET(request: NextRequest) {
         }
 
         // 2. Check for truncated/invalid launch (Length Defense)
-        if (launch.length < 50) {
-            console.warn(`SMART Launch called with invalid/truncated launch token (${launch.length} chars). Abort.`);
+        // Relaxed limit from 50 to 5 to allow UUIDs (36 chars) from SMART Sandbox
+        if (launch.length < 5) {
+            console.warn(`SMART Launch called with invalid/short launch token (${launch.length} chars). Abort.`);
             return NextResponse.redirect(new URL("/login?reason=smart_launch_truncated", request.url));
         }
 
