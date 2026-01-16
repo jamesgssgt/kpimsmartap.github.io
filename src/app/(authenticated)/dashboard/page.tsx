@@ -383,6 +383,18 @@ export default async function DashboardPage(props: {
 
 
                 </div>
+
+                <div className="mt-8 border-t pt-4">
+                    <details className="text-xs text-gray-500">
+                        <summary className="cursor-pointer font-bold mb-2">🔧 Developer Debug Info (v2026.01.16-CookieFix)</summary>
+                        <div className="space-y-2 bg-slate-50 p-4 rounded overflow-auto">
+                            <p><strong>Identity Cookie:</strong> {identityCookie || "null"}</p>
+                            <p><strong>Display Name:</strong> {displayName}</p>
+                            <p><strong>User Email:</strong> {user?.email}</p>
+                            <p><strong>Timestamp:</strong> {new Date().toISOString()}</p>
+                        </div>
+                    </details>
+                </div>
             </div>
         );
 
