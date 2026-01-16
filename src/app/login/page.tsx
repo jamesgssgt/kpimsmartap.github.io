@@ -28,8 +28,8 @@ function LoginContent() {
     const supabase = createClient();
 
     const handleStandaloneLaunch = () => {
-        setIsLoading(true);
-        window.location.href = "/api/auth/smart/launch";
+        // Enforce EHR-Only workflow
+        alert("Standalone Launch is currently disabled. Please launch this application from your Electronic Health Record (EHR) system.");
     };
 
     const handleClose = () => {
@@ -61,6 +61,8 @@ function LoginContent() {
 
         // Check for specific error params from callback
         const errorParam = searchParams.get("error");
+        const reasonParam = searchParams.get("reason");
+
         if (errorParam) {
             setView("error");
             setErrorMessage(errorParam);
@@ -75,13 +77,23 @@ function LoginContent() {
         const defaultAuth = process.env.NEXT_PUBLIC_DEFAULT_AUTH;
         const isLogout = searchParams.get("logout");
 
-        console.log("Debug: NEXT_PUBLIC_DEFAULT_AUTH =", defaultAuth, "IsLogout =", isLogout);
+        console.log("Debug: NEXT_PUBLIC_DEFAULT_AUTH =", defaultAuth, "IsLogout =", isLogout, "Reason =", reasonParam);
 
-        if (defaultAuth === "1" && !isLogout) {
-            // Auto-mode: Show loading and redirect
+        // Auto-mode: Show loading and redirect
+        // Prevent loop if: 1. Logout 2. Reason (Backend rejected launch)
+        if (defaultAuth === "1" && !isLogout && !reasonParam) {
             console.log("DefaultAuth=1 detected, auto-redirecting to SMART Launch...");
             setView("loading");
-            handleStandaloneLaunch();
+            // If handleStandaloneLaunch is updated to alert, this breaks auto-launch?
+            // We should call the URL directly here if we intend to support it, 
+            // BUT backend aborts it. So auto-launch effectively becomes "Auto-Fail".
+            // So we should NOT auto-launch if backend aborts.
+            // If backend is strict, DefaultAuth=1 is invalid config? 
+            // Or we just stop the loop.
+
+            // If strict backend, we cannot auto-launch standalone.
+            // So we switch to "login" view.
+            setView("login");
         } else {
             // Manual mode: Show login form
             setView("login");
