@@ -9,18 +9,11 @@ export async function GET(request: NextRequest) {
         let iss = searchParams.get("iss") || SMART_CONFIG.iss;
         let launch = searchParams.get("launch");
 
-        // ROBUST FIX: Extract launch param raw processing
-        // searchParams can sometimes mishandle '+' -> ' ' conversions depending on exact encoding.
-        // We use regex to get the raw substring and decode manually.
-        const match = request.url.match(/[?&]launch=([^&]+)/);
-        if (match) {
-            const raw = match[1];
-            try {
-                // decodeURIComponent preserves '+' unlike URLSearchParams which might turn it to space if not careful
-                launch = decodeURIComponent(raw);
-            } catch (e) {
-                console.warn("Manual decode of launch param failed, falling back to searchParams", e);
-            }
+        // PATCH: Fix "+" becoming space in searchParams
+        // This is the most reliable fix for Base64 tokens being decoded by searchParams
+        if (launch && launch.includes(" ")) {
+            console.log("Restoring '+' in launch token (received as space)");
+            launch = launch.replace(/ /g, "+");
         }
 
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
