@@ -15,6 +15,7 @@ export async function GET(request: NextRequest) {
         // Use Regex to extract launch param RAW to avoid auto-decoding corruption
         const rawLaunchMatch = request.url.match(/[?&]launch=([^&]+)/);
         let rawLaunch = rawLaunchMatch ? rawLaunchMatch[1] : null;
+        let safeLaunch = null;
 
         // FAIL-SAFE: Check for Token Content Integrity
         // The error "Unexpected end of JSON input" from the auth server means the JSON inside the Base64 token is broken.
@@ -24,6 +25,8 @@ export async function GET(request: NextRequest) {
                 // Note: Launch tokens can be opaque, but if they are Base64 JSON, we must ensure they are valid.
                 // We use decodeURIComponent first in case it's URL encoded, then fallback to raw
                 const candidate = decodeURIComponent(rawLaunch);
+                // Assume candidate is the "real" token string.
+
                 const decoded = Buffer.from(candidate, 'base64').toString('utf-8');
 
                 // Heuristic: If it looks like JSON (starts with { or [), it MUST be valid JSON.
@@ -33,14 +36,24 @@ export async function GET(request: NextRequest) {
                     try {
                         JSON.parse(decoded);
                         // If parse succeeds, it's valid.
+                        safeLaunch = candidate;
                     } catch (jsonError) {
                         console.warn("CRITICAL: Launch Token is Broken JSON (Truncated?). Dropping to prevent Auth Server crash.", jsonError);
-                        rawLaunch = null;
+                        safeLaunch = null;
                     }
+                } else {
+                    // Not JSON-like (opaque token), assume valid if it decoded from URI successfully
+                    safeLaunch = candidate;
                 }
             } catch (e) {
-                // Not valid base64 or other issue? 
-                // If it wasn't valid base64, maybe it's just an ID. checking JSON validity is skiped.
+                // Not valid base64? If it was just a simple ID string, use it.
+                // But usually launch tokens are base64. 
+                // If decodeURIComponent failed, extracting was bad.
+                console.warn("Launch token validation failed:", e);
+                // Fallback: try using the raw extracted string if safe
+                if (rawLaunch && rawLaunch.length < 500) {
+                    safeLaunch = decodeURIComponent(rawLaunch);
+                }
             }
         }
 
@@ -48,8 +61,8 @@ export async function GET(request: NextRequest) {
         if (iss && iss.includes("hapi.fhir.tw")) {
             console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
             iss = "https://launch.smarthealthit.org/v/r4/fhir";
-            launch = null;
-            rawLaunch = null;
+            // launch = null; // Unused
+            safeLaunch = null;
         }
 
         // 1. Get Metadata to find authorization_endpoint
@@ -69,7 +82,7 @@ export async function GET(request: NextRequest) {
 
         let scope = SMART_CONFIG.scope;
 
-        if (!rawLaunch) {
+        if (!safeLaunch) {
             // Standalone Mode (No Launch ID):
             // Ensure we ask for 'launch/patient' to trigger the picker.
             if (scope.includes("launch") && !scope.includes("launch/patient")) {
@@ -94,8 +107,8 @@ export async function GET(request: NextRequest) {
         // Append RAW launch if it exists
         // We manually append the raw string to avoid any re-encoding/decoding by URLSearchParams
         let fullAuthUrl = `${authUrl}?${params.toString()}`;
-        if (rawLaunch) {
-            fullAuthUrl += `&launch=${rawLaunch}`;
+        if (safeLaunch) {
+            fullAuthUrl += `&launch=${encodeURIComponent(safeLaunch)}`;
         }
 
 

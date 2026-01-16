@@ -201,6 +201,35 @@ export async function GET(request: NextRequest) {
             }
         }
 
+        // Plan C: If still "Guest User" and sub is a Practitioner, FETCH Practitioner Name
+        if (identity.name === "Guest User" && identity.sub && identity.sub.startsWith("Practitioner/") && iss) {
+            try {
+                console.log(`Fetching Practitioner Name for ${identity.sub}...`);
+                const pracRes = await fetch(`${iss}/${identity.sub}`, {
+                    headers: { "Authorization": `Bearer ${tokenResponse.access_token}` }
+                });
+
+                if (pracRes.ok) {
+                    const pracData = await pracRes.json();
+                    const getName = (pt: any) => {
+                        if (!pt?.name || pt.name.length === 0) return null;
+                        const n = pt.name[0];
+                        if (n.text) return n.text;
+                        const family = n.family || "";
+                        const given = n.given ? n.given.join(" ") : "";
+                        return `${family} ${given}`.trim();
+                    }
+                    const fetchedName = getName(pracData);
+                    if (fetchedName) {
+                        identity.name = fetchedName;
+                        console.log("Fetched Practitioner Name:", identity.name);
+                    }
+                }
+            } catch (e) {
+                console.warn("Failed to fetch Practitioner:", e);
+            }
+        }
+
         // 5. Store Tokens & Session -> Set on the RESPONSE object
         // Create Redirect Response first
         const redirectUrl = new URL("/dashboard", request.url);
