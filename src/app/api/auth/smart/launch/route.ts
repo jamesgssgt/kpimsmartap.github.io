@@ -1,96 +1,49 @@
 import { NextRequest, NextResponse } from "next/server";
 import { SMART_CONFIG, getSmartMetadata } from "@/utils/smart-conf";
-import { cookies } from "next/headers";
 import crypto from "node:crypto";
 
 export async function GET(request: NextRequest) {
     try {
         const searchParams = request.nextUrl.searchParams;
-        let iss = searchParams.get("iss") || SMART_CONFIG.iss; // Changed to let to allow modification
-        let launch = searchParams.get("launch"); // Changed to let
+        let iss = searchParams.get("iss") || SMART_CONFIG.iss;
+        let launch = searchParams.get("launch");
         const debug = searchParams.get("debug");
-
-
-
-        // Use Regex to extract launch param RAW to avoid auto-decoding corruption
-        const rawLaunchMatch = request.url.match(/[?&]launch=([^&]+)/);
-        let rawLaunch = rawLaunchMatch ? rawLaunchMatch[1] : null;
-        let safeLaunch = null;
-
-        // FAIL-SAFE: Check for Token Content Integrity
-        // The error "Unexpected end of JSON input" from the auth server means the JSON inside the Base64 token is broken.
-        if (rawLaunch) {
-            try {
-                // Try to decode as Base64 to see if it's a JSON object
-                // Note: Launch tokens can be opaque, but if they are Base64 JSON, we must ensure they are valid.
-                // We use decodeURIComponent first in case it's URL encoded, then fallback to raw
-                const candidate = decodeURIComponent(rawLaunch);
-                // Assume candidate is the "real" token string.
-
-                const decoded = Buffer.from(candidate, 'base64').toString('utf-8');
-
-                // Heuristic: If it looks like JSON (starts with { or [), it MUST be valid JSON.
-                // SMART Sandbox Launch tokens can be JSON Arrays or Objects.
-                const trimmed = decoded.trim();
-                if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-                    try {
-                        JSON.parse(decoded);
-                        // If parse succeeds, it's valid.
-                        safeLaunch = candidate;
-                    } catch (jsonError) {
-                        console.warn("CRITICAL: Launch Token is Broken JSON (Truncated?). Dropping to prevent Auth Server crash.", jsonError);
-                        safeLaunch = null;
-                    }
-                } else {
-                    // Not JSON-like (opaque token), assume valid if it decoded from URI successfully
-                    safeLaunch = candidate;
-                }
-            } catch (e) {
-                // Not valid base64? If it was just a simple ID string, use it.
-                // But usually launch tokens are base64. 
-                // If decodeURIComponent failed, extracting was bad.
-                console.warn("Launch token validation failed:", e);
-                // Fallback: try using the raw extracted string if safe
-                if (rawLaunch && rawLaunch.length < 500) {
-                    safeLaunch = decodeURIComponent(rawLaunch);
-                }
-            }
-        }
 
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
         if (iss && iss.includes("hapi.fhir.tw")) {
             console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
             iss = "https://launch.smarthealthit.org/v/r4/fhir";
-            // launch = null; // Unused
-            safeLaunch = null;
+            // Do NOT forward launch token if hijacking, as it belongs to the wrong server
+            launch = null;
+        }
+
+        // FAIL-SAFE: Handle "+" decoding issue in Launch Token
+        // When reading from searchParams, "+" is decoded as " " (space).
+        // Launch tokens (Base64) often contain "+" but never " ".
+        // If we see spaces, we assume they were originally "+" and restore them.
+        if (launch && launch.includes(" ")) {
+            console.log("Restoring '+' in launch token (received as space)");
+            launch = launch.replace(/ /g, "+");
         }
 
         // 1. Get Metadata to find authorization_endpoint
         const metadata = await getSmartMetadata(iss);
-        const authUrl = metadata?.authorization_endpoint || "https://launch.smarthealthit.org/v/r4/auth/authorize"; // Fallback for sandbox
+        const authUrl = metadata?.authorization_endpoint || "https://launch.smarthealthit.org/v/r4/auth/authorize";
 
-        // 2. Generate State & PKCE (With valid crypto)
+        // 2. Generate State & PKCE
         const state = Math.random().toString(36).substring(7);
-
-        // PKCE: Generate code_verifier and code_challenge
-        // Fix: Use crypto.randomBytes for Node.js environment instead of Web Crypto's getRandomValues on the module
         const code_verifier = crypto.randomBytes(32).toString('base64url');
         const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
         // 3. Construct URL
         const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
-
         let scope = SMART_CONFIG.scope;
 
-        if (!safeLaunch) {
-            // Standalone Mode (No Launch ID):
-            // Ensure we ask for 'launch/patient' to trigger the picker.
+        if (!launch) {
+            // Standalone Mode (No Launch ID): Ask for patient picker
             if (scope.includes("launch") && !scope.includes("launch/patient")) {
                 scope = scope.replace("launch", "launch/patient");
             }
-        } else {
-            // EHR Mode (With Launch ID):
-            // Keep generic 'launch' scope.
         }
 
         const params = new URLSearchParams({
@@ -104,29 +57,22 @@ export async function GET(request: NextRequest) {
             scope: scope,
         });
 
-        // Append RAW launch if it exists
-        // We manually append the raw string to avoid any re-encoding/decoding by URLSearchParams
+        // Append Launch Token manually (re-encoded) to be safe
         let fullAuthUrl = `${authUrl}?${params.toString()}`;
-        if (safeLaunch) {
-            fullAuthUrl += `&launch=${encodeURIComponent(safeLaunch)}`;
+        if (launch) {
+            fullAuthUrl += `&launch=${encodeURIComponent(launch)}`;
         }
 
-
         console.log("SMART Launch Debug:", {
-            requestUrl: request.url, // CRITICAL: See exact incoming URL
+            requestUrl: request.url,
             iss,
-            launch, // Decoded via searchParams
-            rawLaunch, // Extracted via Regex
+            launch_processed: launch,
             clientId: SMART_CONFIG.clientId,
             redirectUri,
-            scope: SMART_CONFIG.scope,
+            scope,
             authEndpoint: authUrl,
             fullUrl: fullAuthUrl
         });
-
-        // 4. Store state and iss in cookie for callback verification
-        // 4. Store state and iss in cookie for callback verification
-        // const cookieStore = await cookies(); // Not using this for setting anymore
 
         // Cookie Options 
         const cookieOptions = {
