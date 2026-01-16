@@ -41,19 +41,17 @@ export default async function DashboardPage(props: {
             data: { user },
         } = await supabase.auth.getUser();
 
-        if (!user) {
+        // [Auth Check] Support both Supabase Auth AND SMART on FHIR Session
+        const cookieStore = await import("next/headers").then(m => m.cookies());
+        const hasActiveSmartSession = cookieStore.has("fhir_access_token");
+
+        if (!user && !hasActiveSmartSession) {
             return redirect("/login");
         }
 
-        // Try to get SMART User Identity from Cookie
-        const cookieStore = await import("next/headers").then(m => m.cookies());
-
-        // CRITICAL FIX: Only trust identity if the Access Token is actually present/active
-        // This prevents stale identity cookies from a previous session from overwriting the current login
-        const hasActiveSmartSession = cookieStore.has("fhir_access_token");
         const identityCookie = hasActiveSmartSession ? cookieStore.get("fhir_user_identity")?.value : null;
 
-        let displayName = user.email || "Guest User";
+        let displayName = user?.email || "Guest User";
 
         if (identityCookie) {
             try {
@@ -61,7 +59,7 @@ export default async function DashboardPage(props: {
                 // Smart Name > Supabase Email > Smart Sub > Guest
                 if (identity.name && identity.name.trim() !== "") {
                     displayName = identity.name;
-                } else if (identity.sub && !user.email) {
+                } else if (identity.sub && (!user || !user.email)) {
                     // Start of fallback: Only show ID if we have NO email
                     displayName = `User: ${identity.sub}`;
                 }
