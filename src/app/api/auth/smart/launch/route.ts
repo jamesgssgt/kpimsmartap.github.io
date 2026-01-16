@@ -10,6 +10,10 @@ export async function GET(request: NextRequest) {
         let launch = searchParams.get("launch"); // Changed to let
         const debug = searchParams.get("debug");
 
+        // Use Regex to extract launch param RAW to avoid auto-decoding corruption (e.g. + becoming space)
+        const rawLaunchMatch = request.url.match(/[?&]launch=([^&]+)/);
+        let rawLaunch = rawLaunchMatch ? rawLaunchMatch[1] : null;
+
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
         // The user is likely selecting hapi.fhir.tw in the launcher, but that server doesn't support SMART Auth.
         // We force it to the Sandbox to allow the login flow to complete.
@@ -24,6 +28,7 @@ export async function GET(request: NextRequest) {
             // We cannot use it on the Sandbox. We must drop it to force a Standalone Launch.
             // ONLY drop it if we swapped the server.
             launch = null;
+            rawLaunch = null;
         }
 
         // 1. Get Metadata to find authorization_endpoint
@@ -43,10 +48,10 @@ export async function GET(request: NextRequest) {
 
         let scope = SMART_CONFIG.scope;
 
-        // Note: 'launch' variable comes from searchParams handling at top of file
-        // If we are in the hapi.fhir.tw hijack block, launch was set to null.
+        // Note: 'rawLaunch' variable extracted via Regex
+        // If we are in the hapi.fhir.tw hijack block, rawLaunch was set to null.
 
-        if (!launch) {
+        if (!rawLaunch) {
             // Standalone Mode (No Launch ID):
             // Ensure we ask for 'launch/patient' to trigger the picker.
             if (scope.includes("launch") && !scope.includes("launch/patient")) {
@@ -56,6 +61,8 @@ export async function GET(request: NextRequest) {
             // EHR Mode (With Launch ID):
             // Keep generic 'launch' scope.
         }
+
+
 
         const params = new URLSearchParams({
             response_type: "code",
@@ -68,15 +75,17 @@ export async function GET(request: NextRequest) {
             scope: scope,
         });
 
-        if (launch) {
-            params.append("launch", launch);
+        // Append RAW launch if it exists
+        // We do not add it to URLSearchParams to avoid re-encoding
+        let fullAuthUrl = `${authUrl}?${params.toString()}`;
+        if (rawLaunch) {
+            fullAuthUrl += `&launch=${rawLaunch}`;
         }
-
-        const fullAuthUrl = `${authUrl}?${params.toString()}`;
         console.log("SMART Launch Debug:", {
             requestUrl: request.url, // CRITICAL: See exact incoming URL
             iss,
             launch, // Decoded via searchParams (line 10)
+            rawLaunch, // Extracted via Regex
             clientId: SMART_CONFIG.clientId,
             redirectUri,
             scope: SMART_CONFIG.scope,
