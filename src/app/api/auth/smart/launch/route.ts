@@ -9,34 +9,33 @@ export async function GET(request: NextRequest) {
         let iss = searchParams.get("iss") || SMART_CONFIG.iss;
         let launch = searchParams.get("launch");
 
-        // [Debug] Check received launch token validation
-        if (launch) {
-            console.log(`[Launch Debug] Received launch token. Length: ${launch.length}`);
-            console.log(`[Launch Debug] Token tail (last 10 chars): ${launch.slice(-10)}`);
+        // [CRITICAL FIX] Strict Launch Requirement (No Standalone via this route)
+        // SMART Health IT Sandbox expects EHR-initiated launch (with token).
+        // App-initiated standalone launch (without token) is not supported here and causes crashes.
 
-            // Defense: If launch token is suspiciously short (e.g. truncated), drop it.
-            // A valid SMART launch token (JWT/Opaque) is typically very long.
-            if (launch.length < 50) {
-                console.warn(`[Launch Warning] Launch token is too short (${launch.length} chars), likely truncated. Dropping to prevent Server Error.`);
-                launch = null;
-            }
-        } else {
-            console.log("[Launch Debug] No launch param provided (Standalone Launch mode).");
+        // 1. Check for missing launch (Strict)
+        // Catches: null, undefined, literal "undefined"/"null" strings, empty strings
+        if (!launch || launch === "undefined" || launch === "null" || !launch.trim()) {
+            console.warn("SMART Launch called without launch param. Abort.");
+            return NextResponse.redirect(new URL("/login?reason=smart_launch_required", request.url));
+        }
+
+        // 2. Check for truncated/invalid launch (Length Defense)
+        if (launch.length < 50) {
+            console.warn(`SMART Launch called with invalid/truncated launch token (${launch.length} chars). Abort.`);
+            return NextResponse.redirect(new URL("/login?reason=smart_launch_truncated", request.url));
         }
 
         // PATCH: Fix "+" becoming space in searchParams
-        // This is the most reliable fix for Base64 tokens being decoded by searchParams
-        if (launch && launch.includes(" ")) {
+        if (launch.includes(" ")) {
             console.log("Restoring '+' in launch token (received as space)");
             launch = launch.replace(/ /g, "+");
         }
 
-        // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
+        // FIX: Reject hapi.fhir.tw strictly
         if (iss && iss.includes("hapi.fhir.tw")) {
-            console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
-            iss = "https://launch.smarthealthit.org/v/r4/fhir";
-            // Do NOT forward launch token if hijacking, as it belongs to the wrong server
-            launch = null;
+            console.warn("Detected hapi.fhir.tw ISS, which does not support SMART Launch. Aborting.");
+            return NextResponse.redirect(new URL("/login?error=invalid_iss_hapi_not_supported", request.url));
         }
 
         // 1. Get Metadata to find authorization_endpoint
@@ -48,33 +47,9 @@ export async function GET(request: NextRequest) {
         const code_verifier = crypto.randomBytes(32).toString('base64url');
         const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
-        // Sanitize launch param (prevent literal "undefined" strings)
-        if (launch === "undefined" || launch === "null") {
-            launch = null;
-        }
-
         // 3. Construct URL
         const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
-        let scope = SMART_CONFIG.scope;
-
-        if (!launch) {
-            // Standalone Mode (No Launch ID):
-            // We MUST ensure 'launch' scope is NOT present, as it requires a launch param.
-            // We ensure 'launch/patient' IS present to trigger the picker.
-
-            // Sanitizing Scope: Split, Filter, Add, Join
-            const scopes = scope.split(" ");
-            const newScopes = scopes
-                .filter(s => s !== "launch") // Remove raw 'launch'
-                .filter(s => s !== "launch/patient"); // Remove existing 'launch/patient' to avoid dupes
-
-            // Add 'launch/patient'
-            newScopes.unshift("launch/patient");
-
-            scope = newScopes.join(" ");
-
-            console.log("Converted scope for Standalone Launch:", scope);
-        }
+        const scope = SMART_CONFIG.scope;
 
         const params = new URLSearchParams({
             response_type: "code",
