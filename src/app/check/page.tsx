@@ -1,6 +1,7 @@
 "use client";
 
-import { useState } from "react";
+import { useState, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -44,8 +45,10 @@ const SUGGESTED_FIELDS = [
     { key: "introspection_endpoint", label: "Introspection Endpoint", description: "URL of the OP's OAuth 2.0 Introspection Endpoint" },
 ];
 
-export default function CheckPage() {
-    const [iss, setIss] = useState("https://hapi.fhir.tw/fhir");
+function CheckPageContent() {
+    const searchParams = useSearchParams();
+    const queryIss = searchParams.get("iss");
+    const [iss, setIss] = useState(queryIss || "https://hapi.fhir.tw/fhir");
     const [loading, setLoading] = useState(false);
     const [error, setError] = useState<string | null>(null);
     const [metadata, setMetadata] = useState<SmartMetadata | null>(null);
@@ -235,5 +238,13 @@ export default function CheckPage() {
                 )}
             </div>
         </div>
+    );
+}
+
+export default function CheckPage() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center p-10"><Loader2 className="h-8 w-8 animate-spin" /></div>}>
+            <CheckPageContent />
+        </Suspense>
     );
 }
