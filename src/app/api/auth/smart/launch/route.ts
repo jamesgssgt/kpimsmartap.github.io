@@ -13,12 +13,16 @@ export async function GET(request: NextRequest) {
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
         // The user is likely selecting hapi.fhir.tw in the launcher, but that server doesn't support SMART Auth.
         // We force it to the Sandbox to allow the login flow to complete.
+        // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
+        // The user is likely selecting hapi.fhir.tw in the launcher, but that server doesn't support SMART Auth.
+        // We force it to the Sandbox to allow the login flow to complete.
         if (iss && iss.includes("hapi.fhir.tw")) {
             console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
             iss = "https://launch.smarthealthit.org/v/r4/fhir";
 
             // CRITICAL FIX: The 'launch' context from keys is bound to hapi.fhir.tw.
             // We cannot use it on the Sandbox. We must drop it to force a Standalone Launch.
+            // ONLY drop it if we swapped the server.
             launch = null;
         }
 
