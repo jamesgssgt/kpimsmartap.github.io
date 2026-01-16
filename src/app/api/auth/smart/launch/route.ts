@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { SMART_CONFIG, getSmartMetadata } from "@/utils/smart-conf";
 import crypto from "node:crypto";
 
@@ -39,15 +40,32 @@ export async function GET(request: NextRequest) {
         const code_verifier = crypto.randomBytes(32).toString('base64url');
         const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
+        // Sanitize launch param (prevent literal "undefined" strings)
+        if (launch === "undefined" || launch === "null") {
+            launch = null;
+        }
+
         // 3. Construct URL
         const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
         let scope = SMART_CONFIG.scope;
 
         if (!launch) {
-            // Standalone Mode (No Launch ID): Ask for patient picker
-            if (scope.includes("launch") && !scope.includes("launch/patient")) {
-                scope = scope.replace("launch", "launch/patient");
-            }
+            // Standalone Mode (No Launch ID):
+            // We MUST ensure 'launch' scope is NOT present, as it requires a launch param.
+            // We ensure 'launch/patient' IS present to trigger the picker.
+
+            // Sanitizing Scope: Split, Filter, Add, Join
+            const scopes = scope.split(" ");
+            const newScopes = scopes
+                .filter(s => s !== "launch") // Remove raw 'launch'
+                .filter(s => s !== "launch/patient"); // Remove existing 'launch/patient' to avoid dupes
+
+            // Add 'launch/patient'
+            newScopes.unshift("launch/patient");
+
+            scope = newScopes.join(" ");
+
+            console.log("Converted scope for Standalone Launch:", scope);
         }
 
         const params = new URLSearchParams({
