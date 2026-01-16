@@ -172,7 +172,9 @@ export async function GET(request: NextRequest) {
         }
 
         // Plan B: If still empty and we have a Patient ID, FETCH the Patient Name
-        if (!identity.name && tokenResponse.patient && iss) {
+        // CRITICAL FIX: Do NOT do this if the user is a Practitioner (Provider Launch context)
+        // In Provider Launch, 'patient' param is the context, not the user identity.
+        if (!identity.name && tokenResponse.patient && iss && !identity.sub.startsWith("Practitioner/")) {
             try {
                 console.log(`Fetching Patient Name for ${tokenResponse.patient}...`);
                 const patRes = await fetch(`${iss}/Patient/${tokenResponse.patient}`, {
