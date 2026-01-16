@@ -12,8 +12,8 @@ export function SignOutButton() {
         const supabase = createClient();
         await supabase.auth.signOut();
         await supabase.auth.signOut();
-        // Force hard redirect to clear state and ensure query params are fresh
-        window.location.href = "/login?logout=true";
+        // Redirect to Server-side Logout route to clear strictly httpOnly cookies
+        window.location.href = "/api/auth/logout";
         router.refresh(); // Refresh to clear server context
     };
 
