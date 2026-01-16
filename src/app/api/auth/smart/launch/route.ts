@@ -79,6 +79,7 @@ export async function GET(request: NextRequest) {
         });
 
         // 4. Store state and iss in cookie for callback verification
+        const cookieStore = await cookies();
 
         // Cookie Options 
         const cookieOptions = {
@@ -89,15 +90,15 @@ export async function GET(request: NextRequest) {
             maxAge: 1800
         };
 
+        // Set Cookies via Store (Preferred implementation)
+        cookieStore.set("smart_state", state, cookieOptions);
+        cookieStore.set("smart_iss", iss, cookieOptions);
+        cookieStore.set("smart_code_verifier", code_verifier, cookieOptions);
+
         // 5. Redirect with Cache Busting
         const bustUrl = `${fullAuthUrl}&_t=${Date.now()}`;
         const response = NextResponse.redirect(bustUrl);
         response.headers.set("Cache-Control", "no-store, max-age=0");
-
-        // Set Cookies on Response
-        response.cookies.set("smart_state", state, cookieOptions);
-        response.cookies.set("smart_iss", iss, cookieOptions);
-        response.cookies.set("smart_code_verifier", code_verifier, cookieOptions);
 
         return response;
     } catch (error) {
