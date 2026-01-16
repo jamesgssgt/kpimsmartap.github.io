@@ -170,19 +170,80 @@ export async function GET(request: NextRequest) {
         }
 
         // Plan B logic for identity fetching remains above...
+        // Extract Identity (id_token OR Fetch Patient)
+        let identity = {
+            sub: tokenResponse.patient || "unknown",
+            iss: iss,
+            name: "Guest User",
+            email: ""
+        };
+
+        // Plan A: Try id_token
+        if (tokenResponse.id_token) {
+            try {
+                const { decodeJwt } = await import("jose");
+                const claims = decodeJwt(tokenResponse.id_token);
+                console.log("SMART Callback: id_token claims:", claims);
+
+                if (claims.sub) identity.sub = claims.sub as string;
+                if (claims.email) identity.email = claims.email as string;
+
+                const claimName = claims.name || claims.profile || claims.fhirUser;
+                if (claimName) {
+                    identity.name = claimName as string;
+                }
+            } catch (e) {
+                console.warn("Failed to decode id_token:", e);
+            }
+        }
+
+        // Plan B: If still "Guest User" and we have a Patient ID, FETCH the Patient Name
+        if (identity.name === "Guest User" && tokenResponse.patient && iss) {
+            try {
+                console.log(`Fetching Patient Name for ${tokenResponse.patient}...`);
+                const patRes = await fetch(`${iss}/Patient/${tokenResponse.patient}`, {
+                    headers: { "Authorization": `Bearer ${tokenResponse.access_token}` }
+                });
+
+                if (patRes.ok) {
+                    const patData = await patRes.json();
+                    // FHIR HumanName helper
+                    const getName = (pt: any) => {
+                        if (!pt?.name || pt.name.length === 0) return null;
+                        const n = pt.name[0];
+                        if (n.text) return n.text;
+                        const family = n.family || "";
+                        const given = n.given ? n.given.join(" ") : "";
+                        return `${family} ${given}`.trim();
+                    }
+                    const fetchedName = getName(patData);
+                    if (fetchedName) {
+                        identity.name = fetchedName;
+                        console.log("Fetched Patient Name:", identity.name);
+                    }
+                } else {
+                    console.warn(`Failed to fetch Patient details: ${patRes.status} ${patRes.statusText}`);
+                }
+            } catch (fetchErr) {
+                console.error("Failed to fetch Patient details:", fetchErr);
+            }
+        }
+
         console.log("Final Identity for Cookie:", identity);
 
         response.cookies.set("fhir_user_identity", JSON.stringify(identity), {
             httpOnly: false, // Allow client to read for display
             secure: process.env.NODE_ENV === "production",
-            path: "/"
+            path: "/",
+            sameSite: "lax"
         });
 
         // Set a visible cookie for client-side to assume we are authenticated via SMART
         response.cookies.set("smart_authenticated", "1", {
             httpOnly: false, // Accessible by JS
             secure: process.env.NODE_ENV === "production",
-            path: "/"
+            path: "/",
+            sameSite: "lax"
         });
 
         return response;

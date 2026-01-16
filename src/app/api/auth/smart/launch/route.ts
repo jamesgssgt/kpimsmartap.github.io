@@ -26,8 +26,10 @@ export async function GET(request: NextRequest) {
                 const candidate = decodeURIComponent(rawLaunch);
                 const decoded = Buffer.from(candidate, 'base64').toString('utf-8');
 
-                // Heuristic: If it looks like JSON (starts with {), it MUST be valid JSON.
-                if (decoded.trim().startsWith("{")) {
+                // Heuristic: If it looks like JSON (starts with { or [), it MUST be valid JSON.
+                // SMART Sandbox Launch tokens can be JSON Arrays or Objects.
+                const trimmed = decoded.trim();
+                if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
                     try {
                         JSON.parse(decoded);
                         // If parse succeeds, it's valid.
@@ -116,9 +118,9 @@ export async function GET(request: NextRequest) {
         // Cookie Options 
         const cookieOptions = {
             httpOnly: true,
-            secure: true,
+            secure: process.env.NODE_ENV === "production",
             path: "/",
-            sameSite: "none" as const,
+            sameSite: "lax" as const,
             maxAge: 1800
         };
 
