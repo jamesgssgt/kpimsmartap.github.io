@@ -172,8 +172,9 @@ export async function GET(request: NextRequest) {
         }
 
         // Plan B: If still empty and we have a Patient ID, FETCH the Patient Name
-        // CRITICAL FIX: Do NOT do this if the user is a Practitioner (Provider Launch context)
-        // In Provider Launch, 'patient' param is the context, not the user identity.
+        // [DISABLED] User explicitly requested to IGNORE patient data for Identity.
+        // In this Provider App, 'patient' in token response is strictly Context, not User.
+        /*
         if (!identity.name && tokenResponse.patient && iss && !identity.sub.startsWith("Practitioner/")) {
             try {
                 console.log(`Fetching Patient Name for ${tokenResponse.patient}...`);
@@ -204,6 +205,7 @@ export async function GET(request: NextRequest) {
                 console.error("Failed to fetch Patient details:", fetchErr);
             }
         }
+        */
 
         // Plan C: If still empty and sub is a Practitioner, FETCH Practitioner Name
         if (!identity.name && identity.sub && identity.sub.startsWith("Practitioner/") && iss) {
