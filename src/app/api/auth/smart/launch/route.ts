@@ -7,7 +7,20 @@ export async function GET(request: NextRequest) {
         const searchParams = request.nextUrl.searchParams;
         let iss = searchParams.get("iss") || SMART_CONFIG.iss;
         let launch = searchParams.get("launch");
-        const debug = searchParams.get("debug");
+
+        // ROBUST FIX: Extract launch param raw processing
+        // searchParams can sometimes mishandle '+' -> ' ' conversions depending on exact encoding.
+        // We use regex to get the raw substring and decode manually.
+        const match = request.url.match(/[?&]launch=([^&]+)/);
+        if (match) {
+            const raw = match[1];
+            try {
+                // decodeURIComponent preserves '+' unlike URLSearchParams which might turn it to space if not careful
+                launch = decodeURIComponent(raw);
+            } catch (e) {
+                console.warn("Manual decode of launch param failed, falling back to searchParams", e);
+            }
+        }
 
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
         if (iss && iss.includes("hapi.fhir.tw")) {
@@ -15,15 +28,6 @@ export async function GET(request: NextRequest) {
             iss = "https://launch.smarthealthit.org/v/r4/fhir";
             // Do NOT forward launch token if hijacking, as it belongs to the wrong server
             launch = null;
-        }
-
-        // FAIL-SAFE: Handle "+" decoding issue in Launch Token
-        // When reading from searchParams, "+" is decoded as " " (space).
-        // Launch tokens (Base64) often contain "+" but never " ".
-        // If we see spaces, we assume they were originally "+" and restore them.
-        if (launch && launch.includes(" ")) {
-            console.log("Restoring '+' in launch token (received as space)");
-            launch = launch.replace(/ /g, "+");
         }
 
         // 1. Get Metadata to find authorization_endpoint
@@ -73,6 +77,8 @@ export async function GET(request: NextRequest) {
             authEndpoint: authUrl,
             fullUrl: fullAuthUrl
         });
+
+        // 4. Store state and iss in cookie for callback verification
 
         // Cookie Options 
         const cookieOptions = {
