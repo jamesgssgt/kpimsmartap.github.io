@@ -36,12 +36,28 @@ export default async function DashboardPage(props: {
         const deptFilters = deptFilterStr ? deptFilterStr.split(",") : [];
         const doctorFilters = doctorFilterStr ? doctorFilterStr.split(",") : [];
 
+
         const {
             data: { user },
         } = await supabase.auth.getUser();
 
         if (!user) {
             return redirect("/login");
+        }
+
+        // Try to get SMART User Identity from Cookie
+        const cookieStore = await import("next/headers").then(m => m.cookies());
+        const identityCookie = cookieStore.get("fhir_user_identity")?.value;
+        let displayName = user.email || "Guest User";
+
+        if (identityCookie) {
+            try {
+                const identity = JSON.parse(identityCookie);
+                if (identity.name) displayName = identity.name;
+                else if (identity.sub) displayName = `User: ${identity.sub}`;
+            } catch (e) {
+                // ignore parse error
+            }
         }
 
         // Fetch KPI Summary (Small table, used for filter lists)
@@ -317,7 +333,10 @@ export default async function DashboardPage(props: {
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
                         <h2 className="text-2xl font-bold tracking-tight">KPIM Dashboard</h2>
                         <div className="flex items-center space-x-2">
-                            <span className="text-sm text-muted-foreground mr-2 hidden md:inline-block">{user.email}</span>
+                            <div className="flex flex-col items-end">
+                                <span className="text-sm text-muted-foreground mr-2 hidden md:inline-block">{displayName}</span>
+                                <span className="text-[10px] text-gray-300 mr-2">{identityCookie ? "SMART Connected" : "No Identity"}</span>
+                            </div>
                             <SignOutButton />
                         </div>
                     </div>

@@ -229,7 +229,44 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        console.log("Final Identity for Cookie:", identity);
+        // 5. Store Tokens & Session -> Set on the RESPONSE object
+        // Create Redirect Response first
+        const redirectUrl = new URL("/dashboard", request.url);
+        const response = NextResponse.redirect(redirectUrl);
+
+        console.log("Setting Auth Cookies...", {
+            accessToken: tokenResponse.access_token ? "Yes" : "No",
+            patient: tokenResponse.patient,
+            identity: identity.name
+        });
+
+        const oneHour = 3600;
+        response.cookies.set("fhir_access_token", tokenResponse.access_token, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === "production",
+            path: "/",
+            sameSite: "lax",
+            maxAge: oneHour,
+        });
+
+        if (tokenResponse.refresh_token) {
+            response.cookies.set("fhir_refresh_token", tokenResponse.refresh_token, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                path: "/",
+                sameSite: "lax",
+                maxAge: oneHour * 24, // 1 day
+            });
+        }
+
+        if (tokenResponse.patient) {
+            response.cookies.set("fhir_patient", tokenResponse.patient, {
+                httpOnly: true,
+                secure: process.env.NODE_ENV === "production",
+                path: "/",
+                sameSite: "lax"
+            });
+        }
 
         response.cookies.set("fhir_user_identity", JSON.stringify(identity), {
             httpOnly: false, // Allow client to read for display
@@ -249,6 +286,7 @@ export async function GET(request: NextRequest) {
         return response;
 
     } catch (e) {
+        console.error("Callback Error:", e);
         return NextResponse.redirect(new URL(`/login?error=token_request_error&details=${encodeURIComponent(String(e))}`, request.url));
     }
 }

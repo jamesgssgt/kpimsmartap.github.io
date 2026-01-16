@@ -18,7 +18,7 @@ export const SMART_CONFIG = {
 
     // Fix: Use SMART Sandbox FHIR Server by default since hapi.fhir.tw doesn't support SMART Auth
     iss: process.env.SMART_ISS || "https://launch.smarthealthit.org/v/r4/fhir",
-    scope: "launch patient/Encounter.read patient/Patient.read openid profile",
+    scope: "launch patient/Encounter.read patient/Patient.read openid profile fhirUser",
 
     redirectUri: typeof window !== "undefined"
         ? window.location.origin + "/api/auth/smart/callback"
