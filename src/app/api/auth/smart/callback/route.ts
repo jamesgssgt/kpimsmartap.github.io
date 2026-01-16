@@ -138,36 +138,54 @@ export async function GET(request: NextRequest) {
             return NextResponse.redirect(new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(debugInfo)}`, request.url));
         }
 
-        // Success! We have the token.
-        // In a real app, store this in an encrypted HTTP-Only session cookie.
-        // For now, setting a simple cookie for the dashboard to know we are "connected".
-        // ideally, Supabase session should be primary. This is "linked" FHIR session.
+        // Create Redirect Response first
+        const response = NextResponse.redirect(new URL("/dashboard", request.url));
 
-        // We'll store the access token in a strict cookie
-        cookieStore.set("fhir_access_token", tokenResponse.access_token, {
+        // 5. Store Tokens & Session -> Set on the RESPONSE object
+        const oneHour = 3600;
+        response.cookies.set("fhir_access_token", tokenResponse.access_token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            secure: true,
             path: "/",
-            maxAge: tokenResponse.expires_in || 3600
+            sameSite: "none",
+            maxAge: oneHour,
         });
 
+        if (tokenResponse.refresh_token) {
+            response.cookies.set("fhir_refresh_token", tokenResponse.refresh_token, {
+                httpOnly: true,
+                secure: true,
+                path: "/",
+                sameSite: "none",
+                maxAge: oneHour * 24, // 1 day
+            });
+        }
+
         if (tokenResponse.patient) {
-            cookieStore.set("fhir_patient", tokenResponse.patient, {
+            response.cookies.set("fhir_patient", tokenResponse.patient, {
                 httpOnly: true,
                 secure: process.env.NODE_ENV === "production",
                 path: "/"
             });
         }
 
+        // Plan B logic for identity fetching remains above...
+        console.log("Final Identity for Cookie:", identity);
+
+        response.cookies.set("fhir_user_identity", JSON.stringify(identity), {
+            httpOnly: false, // Allow client to read for display
+            secure: process.env.NODE_ENV === "production",
+            path: "/"
+        });
+
         // Set a visible cookie for client-side to assume we are authenticated via SMART
-        // This allows SmartLoader to trigger anonymous login if needed
-        cookieStore.set("smart_authenticated", "1", {
+        response.cookies.set("smart_authenticated", "1", {
             httpOnly: false, // Accessible by JS
             secure: process.env.NODE_ENV === "production",
             path: "/"
         });
 
-        return NextResponse.redirect(new URL("/dashboard", request.url));
+        return response;
 
     } catch (e) {
         return NextResponse.redirect(new URL(`/login?error=token_request_error&details=${encodeURIComponent(String(e))}`, request.url));

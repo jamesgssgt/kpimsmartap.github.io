@@ -70,9 +70,11 @@ function LoginContent() {
         }
 
         const defaultAuth = process.env.NEXT_PUBLIC_DEFAULT_AUTH;
-        console.log("Debug: NEXT_PUBLIC_DEFAULT_AUTH =", defaultAuth);
+        const isLogout = searchParams.get("logout");
 
-        if (defaultAuth === "1") {
+        console.log("Debug: NEXT_PUBLIC_DEFAULT_AUTH =", defaultAuth, "IsLogout =", isLogout);
+
+        if (defaultAuth === "1" && !isLogout) {
             // Auto-mode: Show loading and redirect
             console.log("DefaultAuth=1 detected, auto-redirecting to SMART Launch...");
             setView("loading");
@@ -164,7 +166,7 @@ function LoginContent() {
     }
 
 
-    if (view === "loading" && process.env.NEXT_PUBLIC_DEFAULT_AUTH === "1") {
+    if (view === "loading" && process.env.NEXT_PUBLIC_DEFAULT_AUTH === "1" && !searchParams.get("logout")) {
         return (
             <div className="min-h-screen flex flex-col items-center justify-center bg-muted/20">
                 <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-primary mb-4"></div>
@@ -174,8 +176,7 @@ function LoginContent() {
         );
     }
 
-    // Default: Login Form (DefaultAuth=0)
-    // Note: Removed "Login with Smart ID" button as requested for manual mode cleanup
+    // Default: Login Form (DefaultAuth=0 or Logout)
     return (
         <div className="min-h-screen flex items-center justify-center bg-muted/20">
             <Card className="w-[400px]">
@@ -198,7 +199,25 @@ function LoginContent() {
                     </div>
 
                     <div className="pt-4 space-y-2">
-                        {/* Smart Login Button REMOVED as per request for cleanup */}
+                        <Button
+                            variant="outline"
+                            className="w-full border-blue-600 text-blue-600 hover:bg-blue-50"
+                            onClick={handleStandaloneLaunch}
+                            disabled={isLoading}
+                        >
+                            🚀 Login with SMART ID
+                        </Button>
+
+                        <div className="relative">
+                            <div className="absolute inset-0 flex items-center">
+                                <span className="w-full border-t" />
+                            </div>
+                            <div className="relative flex justify-center text-xs uppercase">
+                                <span className="bg-background px-2 text-muted-foreground">
+                                    Or sign in with
+                                </span>
+                            </div>
+                        </div>
 
                         <Input
                             placeholder="Username (Email)"

@@ -13,20 +13,39 @@ export async function GET(request: NextRequest) {
 
 
         // Use Regex to extract launch param RAW to avoid auto-decoding corruption
-        // We capture everything until the next '&' or end of string.
         const rawLaunchMatch = request.url.match(/[?&]launch=([^&]+)/);
         let rawLaunch = rawLaunchMatch ? rawLaunchMatch[1] : null;
 
+        // FAIL-SAFE: Check for Token Content Integrity
+        // The error "Unexpected end of JSON input" from the auth server means the JSON inside the Base64 token is broken.
+        if (rawLaunch) {
+            try {
+                // Try to decode as Base64 to see if it's a JSON object
+                // Note: Launch tokens can be opaque, but if they are Base64 JSON, we must ensure they are valid.
+                // We use decodeURIComponent first in case it's URL encoded, then fallback to raw
+                const candidate = decodeURIComponent(rawLaunch);
+                const decoded = Buffer.from(candidate, 'base64').toString('utf-8');
+
+                // Heuristic: If it looks like JSON (starts with {), it MUST be valid JSON.
+                if (decoded.trim().startsWith("{")) {
+                    try {
+                        JSON.parse(decoded);
+                        // If parse succeeds, it's valid.
+                    } catch (jsonError) {
+                        console.warn("CRITICAL: Launch Token is Broken JSON (Truncated?). Dropping to prevent Auth Server crash.", jsonError);
+                        rawLaunch = null;
+                    }
+                }
+            } catch (e) {
+                // Not valid base64 or other issue? 
+                // If it wasn't valid base64, maybe it's just an ID. checking JSON validity is skiped.
+            }
+        }
+
         // FIX: Hijack "hapi.fhir.tw" and redirect to SMART Sandbox
-        // The user is likely selecting hapi.fhir.tw in the launcher, but that server doesn't support SMART Auth.
-        // We force it to the Sandbox to allow the login flow to complete.
         if (iss && iss.includes("hapi.fhir.tw")) {
             console.warn("Detected hapi.fhir.tw ISS, hijacking to SMART Sandbox for Auth...");
             iss = "https://launch.smarthealthit.org/v/r4/fhir";
-
-            // CRITICAL FIX: The 'launch' context from keys is bound to hapi.fhir.tw.
-            // We cannot use it on the Sandbox. We must drop it to force a Standalone Launch.
-            // ONLY drop it if we swapped the server.
             launch = null;
             rawLaunch = null;
         }
@@ -91,60 +110,28 @@ export async function GET(request: NextRequest) {
         });
 
         // 4. Store state and iss in cookie for callback verification
-        const cookieStore = await cookies();
-        // Cookie Options for maximum reliability during redirect
+        // 4. Store state and iss in cookie for callback verification
+        // const cookieStore = await cookies(); // Not using this for setting anymore
+
+        // Cookie Options 
         const cookieOptions = {
             httpOnly: true,
-            // SameSite=None REQUIRED for cross-site redirects in some browsers/flows
-            // Secure must be true if SameSite=None
             secure: true,
             path: "/",
             sameSite: "none" as const,
-            maxAge: 1800 // 30 minutes
+            maxAge: 1800
         };
 
-        cookieStore.set("smart_state", state, cookieOptions);
-        cookieStore.set("smart_iss", iss, cookieOptions);
-        cookieStore.set("smart_code_verifier", code_verifier, cookieOptions);
-
-        if (debug === "true") {
-            return new NextResponse(`
-                <html>
-                    <head>
-                        <title>SMART Launch Debug</title>
-                        <style>
-                            body { font-family: sans-serif; padding: 20px; max-width: 800px; margin: 0 auto; line-height: 1.6; }
-                            h1 { color: #cc0000; }
-                            pre { background: #f4f4f4; padding: 15px; border-radius: 5px; overflow-x: auto; }
-                            .btn { display: inline-block; padding: 10px 20px; background: #007bff; color: white; text-decoration: none; border-radius: 5px; margin-top: 20px; }
-                            .btn:hover { background: #0056b3; }
-                        </style>
-                    </head>
-                    <body>
-                        <h1>SMART Launch Debug Mode</h1>
-                        <p><strong>ISS:</strong> ${iss}</p>
-                        <p><strong>Launch ID:</strong> ${launch}</p>
-                        <p><strong>Client ID:</strong> ${SMART_CONFIG.clientId}</p>
-                        <p><strong>Redirect URI:</strong> ${redirectUri}</p>
-                        <p><strong>Scope:</strong> ${SMART_CONFIG.scope}</p>
-                        <p><strong>Auth Endpoint:</strong> ${authUrl}</p>
-                        
-                        <h3>Generated Authorization URL</h3>
-                        <pre>${fullAuthUrl}</pre>
-
-                        <a href="${fullAuthUrl}" class="btn">Proceed to Connect</a>
-                    </body>
-                </html>
-            `, { headers: { "Content-Type": "text/html" } });
-        }
-
         // 5. Redirect with Cache Busting
-        // We append a timestamp to ensure the browser doesn't cache the 307/308 redirect
-        // which might contain the OLD url with the broken 'launch' param.
         const bustUrl = `${fullAuthUrl}&_t=${Date.now()}`;
-
         const response = NextResponse.redirect(bustUrl);
         response.headers.set("Cache-Control", "no-store, max-age=0");
+
+        // Set Cookies on Response
+        response.cookies.set("smart_state", state, cookieOptions);
+        response.cookies.set("smart_iss", iss, cookieOptions);
+        response.cookies.set("smart_code_verifier", code_verifier, cookieOptions);
+
         return response;
     } catch (error) {
         console.error("SMART Launch Error:", error);
