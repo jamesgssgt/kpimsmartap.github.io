@@ -9,6 +9,21 @@ export async function GET(request: NextRequest) {
         let iss = searchParams.get("iss") || SMART_CONFIG.iss;
         let launch = searchParams.get("launch");
 
+        // [Debug] Check received launch token validation
+        if (launch) {
+            console.log(`[Launch Debug] Received launch token. Length: ${launch.length}`);
+            console.log(`[Launch Debug] Token tail (last 10 chars): ${launch.slice(-10)}`);
+
+            // Defense: If launch token is suspiciously short (e.g. truncated), drop it.
+            // A valid SMART launch token (JWT/Opaque) is typically very long.
+            if (launch.length < 50) {
+                console.warn(`[Launch Warning] Launch token is too short (${launch.length} chars), likely truncated. Dropping to prevent Server Error.`);
+                launch = null;
+            }
+        } else {
+            console.log("[Launch Debug] No launch param provided (Standalone Launch mode).");
+        }
+
         // PATCH: Fix "+" becoming space in searchParams
         // This is the most reliable fix for Base64 tokens being decoded by searchParams
         if (launch && launch.includes(" ")) {
