@@ -28,8 +28,8 @@ function LoginContent() {
     const supabase = createClient();
 
     const handleStandaloneLaunch = () => {
-        // Enforce EHR-Only workflow
-        alert("Standalone Launch is currently disabled. Please launch this application from your Electronic Health Record (EHR) system.");
+        // Redirect to external SMART App Launcher for testing EHR Launch flow
+        window.location.href = "https://launch.smarthealthit.org";
     };
 
     const handleClose = () => {
