@@ -138,36 +138,8 @@ export async function GET(request: NextRequest) {
             return NextResponse.redirect(new URL(`/login?error=token_exchange_failed&details=${encodeURIComponent(debugInfo)}`, request.url));
         }
 
-        // Create Redirect Response first
-        const response = NextResponse.redirect(new URL("/dashboard", request.url));
-
-        // 5. Store Tokens & Session -> Set on the RESPONSE object
-        const oneHour = 3600;
-        response.cookies.set("fhir_access_token", tokenResponse.access_token, {
-            httpOnly: true,
-            secure: true,
-            path: "/",
-            sameSite: "none",
-            maxAge: oneHour,
-        });
-
-        if (tokenResponse.refresh_token) {
-            response.cookies.set("fhir_refresh_token", tokenResponse.refresh_token, {
-                httpOnly: true,
-                secure: true,
-                path: "/",
-                sameSite: "none",
-                maxAge: oneHour * 24, // 1 day
-            });
-        }
-
-        if (tokenResponse.patient) {
-            response.cookies.set("fhir_patient", tokenResponse.patient, {
-                httpOnly: true,
-                secure: process.env.NODE_ENV === "production",
-                path: "/"
-            });
-        }
+        // Success! We have the token.
+        // Proceed to identity extraction and cookie setting.
 
         // Plan B logic for identity fetching remains above...
         // Extract Identity (id_token OR Fetch Patient)
