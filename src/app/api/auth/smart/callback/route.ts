@@ -160,9 +160,21 @@ export async function GET(request: NextRequest) {
                 if (claims.sub) identity.sub = claims.sub as string;
                 if (claims.email) identity.email = claims.email as string;
 
-                const claimName = (claims.name || claims.profile || claims.fhirUser) as string;
+                // FIX: Resolve Opaque ID using fhirUser claim (Standard SMART way)
+                if (claims.fhirUser && typeof claims.fhirUser === "string") {
+                    const parts = claims.fhirUser.split("/");
+                    if (parts.length >= 2) {
+                        const id = parts[parts.length - 1];
+                        const type = parts[parts.length - 2];
+                        // Reset sub to be human-readable Resource Reference (e.g. Practitioner/123)
+                        identity.sub = `${type}/${id}`;
+                        console.log("SMART Callback: Resolved fhirUser identity:", identity.sub);
+                    }
+                }
 
-                // Only accept claimName if it's NOT a URL or Resource Reference
+                const claimName = (claims.name || claims.profile) as string;
+
+                // Only accept claimName if it's valid text
                 if (claimName && !claimName.startsWith("http") && !claimName.startsWith("Practitioner/") && !claimName.startsWith("Patient/")) {
                     identity.name = claimName;
                 }
