@@ -202,7 +202,8 @@ export async function GET(request: NextRequest) {
                         const n = pt.name[0];
                         if (n.text) return n.text;
                         const family = n.family || "";
-                        const given = n.given ? n.given.join(" ") : "";
+                        // Filter out "User" if it appears in given name
+                        const given = n.given ? n.given.filter((g: any) => g !== "User").join(" ") : "";
                         return `${family} ${given}`.trim();
                     }
                     const fetchedName = getName(patData);
@@ -234,7 +235,8 @@ export async function GET(request: NextRequest) {
                         const n = pt.name[0];
                         if (n.text) return n.text;
                         const family = n.family || "";
-                        const given = n.given ? n.given.join(" ") : "";
+                        // Filter out "User" if it appears in given name
+                        const given = n.given ? n.given.filter((g: any) => g !== "User").join(" ") : "";
                         return `${family} ${given}`.trim();
                     }
                     const fetchedName = getName(pracData);

@@ -61,7 +61,8 @@ export default async function DashboardPage(props: {
                     displayName = identity.name;
                 } else if (identity.sub && (!user || !user.email)) {
                     // Start of fallback: Only show ID if we have NO email
-                    displayName = `User: ${identity.sub}`;
+                    // [UPDATED] Removed "User: " prefix per user request
+                    displayName = identity.sub;
                 }
             } catch (e) {
                 // ignore parse error
