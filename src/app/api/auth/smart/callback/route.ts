@@ -146,7 +146,7 @@ export async function GET(request: NextRequest) {
         let identity = {
             sub: tokenResponse.patient || "unknown",
             iss: iss,
-            name: "Guest User",
+            name: "", // Default to empty so we know if it's missing
             email: ""
         };
 
@@ -160,17 +160,19 @@ export async function GET(request: NextRequest) {
                 if (claims.sub) identity.sub = claims.sub as string;
                 if (claims.email) identity.email = claims.email as string;
 
-                const claimName = claims.name || claims.profile || claims.fhirUser;
-                if (claimName) {
-                    identity.name = claimName as string;
+                const claimName = (claims.name || claims.profile || claims.fhirUser) as string;
+
+                // Only accept claimName if it's NOT a URL or Resource Reference
+                if (claimName && !claimName.startsWith("http") && !claimName.startsWith("Practitioner/") && !claimName.startsWith("Patient/")) {
+                    identity.name = claimName;
                 }
             } catch (e) {
                 console.warn("Failed to decode id_token:", e);
             }
         }
 
-        // Plan B: If still "Guest User" and we have a Patient ID, FETCH the Patient Name
-        if (identity.name === "Guest User" && tokenResponse.patient && iss) {
+        // Plan B: If still empty and we have a Patient ID, FETCH the Patient Name
+        if (!identity.name && tokenResponse.patient && iss) {
             try {
                 console.log(`Fetching Patient Name for ${tokenResponse.patient}...`);
                 const patRes = await fetch(`${iss}/Patient/${tokenResponse.patient}`, {
@@ -201,8 +203,8 @@ export async function GET(request: NextRequest) {
             }
         }
 
-        // Plan C: If still "Guest User" and sub is a Practitioner, FETCH Practitioner Name
-        if (identity.name === "Guest User" && identity.sub && identity.sub.startsWith("Practitioner/") && iss) {
+        // Plan C: If still empty and sub is a Practitioner, FETCH Practitioner Name
+        if (!identity.name && identity.sub && identity.sub.startsWith("Practitioner/") && iss) {
             try {
                 console.log(`Fetching Practitioner Name for ${identity.sub}...`);
                 const pracRes = await fetch(`${iss}/${identity.sub}`, {

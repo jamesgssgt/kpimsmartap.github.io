@@ -47,14 +47,24 @@ export default async function DashboardPage(props: {
 
         // Try to get SMART User Identity from Cookie
         const cookieStore = await import("next/headers").then(m => m.cookies());
-        const identityCookie = cookieStore.get("fhir_user_identity")?.value;
+
+        // CRITICAL FIX: Only trust identity if the Access Token is actually present/active
+        // This prevents stale identity cookies from a previous session from overwriting the current login
+        const hasActiveSmartSession = cookieStore.has("fhir_access_token");
+        const identityCookie = hasActiveSmartSession ? cookieStore.get("fhir_user_identity")?.value : null;
+
         let displayName = user.email || "Guest User";
 
         if (identityCookie) {
             try {
                 const identity = JSON.parse(identityCookie);
-                if (identity.name) displayName = identity.name;
-                else if (identity.sub) displayName = `User: ${identity.sub}`;
+                // Smart Name > Supabase Email > Smart Sub > Guest
+                if (identity.name && identity.name.trim() !== "") {
+                    displayName = identity.name;
+                } else if (identity.sub && !user.email) {
+                    // Start of fallback: Only show ID if we have NO email
+                    displayName = `User: ${identity.sub}`;
+                }
             } catch (e) {
                 // ignore parse error
             }

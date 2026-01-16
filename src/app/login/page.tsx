@@ -56,6 +56,9 @@ function LoginContent() {
     };
 
     useEffect(() => {
+        // Clear client-side visibility cookie to ensure UI syncs with session state
+        document.cookie = "smart_authenticated=; Max-Age=0; path=/;";
+
         // Check for specific error params from callback
         const errorParam = searchParams.get("error");
         if (errorParam) {
