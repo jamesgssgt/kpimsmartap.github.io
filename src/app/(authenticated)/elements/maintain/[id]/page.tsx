@@ -1,5 +1,7 @@
 "use client";
 
+export const maxDuration = 60; // Allow 60 seconds for AI processing
+
 import React, { useEffect, useState } from 'react';
 import { FactorForm } from '@/components/elements/FactorForm';
 import { useRouter } from 'next/navigation';

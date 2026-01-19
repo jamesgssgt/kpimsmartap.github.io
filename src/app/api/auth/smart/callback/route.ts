@@ -143,19 +143,21 @@ export async function GET(request: NextRequest) {
 
         // Plan B logic for identity fetching remains above...
         // Extract Identity (id_token OR Fetch Patient)
-        let identity = {
+        let identity: any = {
             sub: tokenResponse.patient || "unknown",
             iss: iss,
             name: "", // Default to empty so we know if it's missing
-            email: ""
+            email: "",
+            debug_log: [] as string[]
         };
+
+        identity.debug_log.push(`Initial sub: ${identity.sub}`);
 
         // Plan A: Try id_token
         if (tokenResponse.id_token) {
             try {
                 const { decodeJwt } = await import("jose");
                 const claims = decodeJwt(tokenResponse.id_token);
-                console.log("SMART Callback: id_token claims:", claims);
 
                 if (claims.sub) identity.sub = claims.sub as string;
                 if (claims.email) identity.email = claims.email as string;
@@ -166,87 +168,92 @@ export async function GET(request: NextRequest) {
                     if (parts.length >= 2) {
                         const id = parts[parts.length - 1];
                         const type = parts[parts.length - 2];
-                        // Reset sub to be human-readable Resource Reference (e.g. Practitioner/123)
                         identity.sub = `${type}/${id}`;
-                        console.log("SMART Callback: Resolved fhirUser identity:", identity.sub);
+                        identity.debug_log.push(`Resolved fhirUser: ${identity.sub}`);
                     }
                 }
 
                 const claimName = (claims.name || claims.profile) as string;
-
-                // Only accept claimName if it's valid text
                 if (claimName && !claimName.startsWith("http") && !claimName.startsWith("Practitioner/") && !claimName.startsWith("Patient/")) {
                     identity.name = claimName;
+                    identity.debug_log.push(`Name from id_token: ${claimName}`);
                 }
             } catch (e) {
-                console.warn("Failed to decode id_token:", e);
+                identity.debug_log.push(`id_token error: ${String(e)}`);
             }
         }
 
-        // Plan B: If still empty and we have a Patient ID, FETCH the Patient Name
-        // [DISABLED] User explicitly requested to IGNORE patient data for Identity.
-        // In this Provider App, 'patient' in token response is strictly Context, not User.
-        /*
-        if (!identity.name && tokenResponse.patient && iss && !identity.sub.startsWith("Practitioner/")) {
-            try {
-                console.log(`Fetching Patient Name for ${tokenResponse.patient}...`);
-                const patRes = await fetch(`${iss}/Patient/${tokenResponse.patient}`, {
-                    headers: { "Authorization": `Bearer ${tokenResponse.access_token}` }
-                });
+        // Plan C: If still empty, assume sub might provide a path to the user resource
+        // If sub is a bare ID (e.g. 123), try Practitioner first, then Patient.
+        if (!identity.name && identity.sub && iss) {
+            let targets: string[] = [];
 
-                if (patRes.ok) {
-                    const patData = await patRes.json();
-                    // FHIR HumanName helper
-                    const getName = (pt: any) => {
-                        if (!pt?.name || pt.name.length === 0) return null;
-                        const n = pt.name[0];
-                        if (n.text) return n.text;
-                        const family = n.family || "";
-                        // Filter out "User" if it appears in given name
-                        const given = n.given ? n.given.filter((g: any) => g !== "User").join(" ") : "";
-                        return `${family} ${given}`.trim();
-                    }
-                    const fetchedName = getName(patData);
-                    if (fetchedName) {
-                        identity.name = fetchedName;
-                        console.log("Fetched Patient Name:", identity.name);
-                    }
-                } else {
-                    console.warn(`Failed to fetch Patient details: ${patRes.status} ${patRes.statusText}`);
-                }
-            } catch (fetchErr) {
-                console.error("Failed to fetch Patient details:", fetchErr);
+            // If it already looks like a resource path (e.g. Practitioner/123), try that first
+            if (identity.sub.includes("/") && !identity.sub.startsWith("http")) {
+                targets.push(identity.sub);
+            } else if (!identity.sub.startsWith("http")) {
+                // Heuristic for bare ID: Try Practitioner first, then Patient
+                targets.push(`Practitioner/${identity.sub}`);
+                targets.push(`Patient/${identity.sub}`);
             }
-        }
-        */
 
-        // Plan C: If still empty and sub is a Practitioner, FETCH Practitioner Name
-        if (!identity.name && identity.sub && identity.sub.startsWith("Practitioner/") && iss) {
-            try {
-                console.log(`Fetching Practitioner Name for ${identity.sub}...`);
-                const pracRes = await fetch(`${iss}/${identity.sub}`, {
-                    headers: { "Authorization": `Bearer ${tokenResponse.access_token}` }
-                });
+            let found = false;
 
-                if (pracRes.ok) {
-                    const pracData = await pracRes.json();
-                    const getName = (pt: any) => {
-                        if (!pt?.name || pt.name.length === 0) return null;
-                        const n = pt.name[0];
-                        if (n.text) return n.text;
-                        const family = n.family || "";
-                        // Filter out "User" if it appears in given name
-                        const given = n.given ? n.given.filter((g: any) => g !== "User").join(" ") : "";
-                        return `${family} ${given}`.trim();
+            for (const target of targets) {
+                if (found) break;
+
+                identity.debug_log.push(`Attempting fetch for: ${target}`);
+                try {
+                    const res = await fetch(`${iss}/${target}`, {
+                        headers: { "Authorization": `Bearer ${tokenResponse.access_token}` }
+                    });
+
+                    identity.debug_log.push(`Fetch ${target} Status: ${res.status}`);
+
+                    if (res.ok) {
+                        const data = await res.json();
+                        identity.debug_log.push(`Data Name: ${JSON.stringify(data?.name)}`);
+
+                        const getName = (pt: any) => {
+                            if (!pt?.name || pt.name.length === 0) return null;
+
+                            // Try to find a name with use='official' or just take the first one
+                            const n = pt.name.find((x: any) => x.use === 'official') || pt.name[0];
+
+                            if (n.text) return n.text;
+                            const family = n.family || "";
+
+                            // Robust handling for 'given' which might be string or array
+                            let given = "";
+                            if (Array.isArray(n.given)) {
+                                given = n.given.filter((g: any) => g !== "User").join(" ");
+                            } else if (typeof n.given === "string") {
+                                given = n.given;
+                            }
+
+                            return `${family} ${given}`.trim();
+                        }
+
+                        const fetchedName = getName(data);
+                        if (fetchedName) {
+                            identity.name = fetchedName;
+                            // Update sub to the actual resource we found if it was ambiguous
+                            if (identity.sub !== target) {
+                                identity.sub = target;
+                            }
+                            identity.debug_log.push(`Fetched Name via ${target}: ${identity.name}`);
+                            found = true;
+                        } else {
+                            identity.debug_log.push(`Name extraction failed for ${target}`);
+                        }
+                    } else {
+                        // If not 200 OK, log it and try next target
+                        const errBody = await res.text();
+                        identity.debug_log.push(`${target} Fetch failed: ${errBody.substring(0, 50)}`);
                     }
-                    const fetchedName = getName(pracData);
-                    if (fetchedName) {
-                        identity.name = fetchedName;
-                        console.log("Fetched Practitioner Name:", identity.name);
-                    }
+                } catch (e) {
+                    identity.debug_log.push(`Fetch Exception for ${target}: ${String(e)}`);
                 }
-            } catch (e) {
-                console.warn("Failed to fetch Practitioner:", e);
             }
         }
 
