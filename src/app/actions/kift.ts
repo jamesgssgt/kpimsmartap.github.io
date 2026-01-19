@@ -30,7 +30,19 @@ export async function getFactors(): Promise<Factor[]> {
         .in('kift_id', kiftIds)
         .order('step_order', { ascending: true });
 
-    if (stepsError) throw new Error(stepsError.message);
+    if (stepsError) {
+        console.error("GET Factors Steps Error:", stepsError);
+        // Throwing here crashes the UI. Return empty steps or handle gracefully? 
+        // If critical, maybe we return what we have? 
+        // For now, let's log and throw, but maybe wrapping the whole function is better.
+        // Actually, let's just Log and continue with empty steps map if query fails, 
+        // so at least definitions show up?
+        // But if steps are missing, factors are incomplete.
+        // User saw "invalid input syntax for type uuid", so maybe one of the IDs in `kiftIds` is bad?
+        // Let's log the IDs too.
+        console.error("Kift IDs causing error:", kiftIds);
+        throw new Error(`Steps Fetch Error: ${stepsError.message} (Check Server Console)`);
+    }
 
     // Fetch usage stats from kpi_definitions
     const { data: kpiUsage, error: kpiUsageError } = await supabase

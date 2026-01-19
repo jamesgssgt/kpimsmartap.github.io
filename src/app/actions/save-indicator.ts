@@ -16,6 +16,8 @@ export async function saveIndicator(indicator: QualityIndicator) {
             denominator_name: indicator.denominatorName,
             numerator_c: indicator.numeratorCalculationMethod,
             denominator_c: indicator.denominatorCalculationMethod,
+            numerator_kift_id: indicator.numeratorSteps.find(s => s.valueType === 'factor')?.value || null,
+            denominator_kift_id: indicator.denominatorSteps.find(s => s.valueType === 'factor')?.value || null,
             frequency: indicator.frequency,
             target_value: indicator.targetValue,
             target_operator: indicator.targetOperator,

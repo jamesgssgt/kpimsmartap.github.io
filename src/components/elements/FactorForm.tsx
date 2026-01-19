@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from 'react';
 import { Factor, FactorStep, CalculationStep, QualityIndicator } from '@/components/indicator/types';
 import { saveFactor, getFactors } from '@/app/actions/kift';
+import { analyzeSectionDefinition } from '@/app/actions/ai';
 import { useRouter } from 'next/navigation';
 import { Loader2, X, Plus, ChevronDown, Wand2, Brain, Check, Info, Trash2 } from 'lucide-react';
 import { CriterionRow } from '@/components/indicator/CriterionRow';
@@ -22,6 +23,7 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
     const [name, setName] = useState('');
     const [description, setDescription] = useState('');
     const [method, setMethod] = useState<'sum' | 'count' | 'distcount'>('sum');
+    const [distinctBasis, setDistinctBasis] = useState<string>('Encounter.id');
     const [sourceType, setSourceType] = useState<'FHIR' | 'Manual'>('FHIR'); // Default to FHIR
     const [steps, setSteps] = useState<CalculationStep[]>([]);
     const [isSaving, setIsSaving] = useState(false);
@@ -32,8 +34,7 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
         getFactors().then(setAvailableFactors).catch(console.error);
     }, []);
 
-    // AI Draft
-    const [draft, setDraft] = useState('');
+
     const [isAiLoading, setIsAiLoading] = useState(false);
 
     useEffect(() => {
@@ -41,6 +42,7 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
             setName(initialData.name);
             setDescription(initialData.description);
             setMethod(initialData.method);
+            setDistinctBasis(initialData.distinctBasis || 'Encounter.id');
             setSourceType(initialData.sourceType);
             setSteps(initialData.steps);
         }
@@ -71,6 +73,7 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
                 name,
                 description,
                 method,
+                distinctBasis: method === 'distcount' ? distinctBasis : undefined,
                 sourceType,
                 steps
             };
@@ -84,14 +87,25 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
         }
     };
 
-    // AI Logic (simplified placeholder for now, similar to IndicatorForm)
+    // AI Logic
     const handleSmartAnalyze = async () => {
-        if (!draft.trim()) return;
+        if (!description.trim()) return alert("請輸入描述文字以供分析。");
         setIsAiLoading(true);
-        // Simulate AI delay
-        await new Promise(resolve => setTimeout(resolve, 1500));
-        setIsAiLoading(false);
-        // Would integrate actual AI service here
+        try {
+            // Factor usually maps to Num or Den styled logic, passing 'numerator' as generic or we need to adjust API
+            // Using 'numerator' as default since factors are criteria sets similar to numerator logic
+            const res = await analyzeSectionDefinition(name, description, description, 'numerator');
+
+            if (res?.steps) {
+                const formatted = res.steps.map((s: any) => ({ ...s, id: Math.random().toString(36).substr(2, 9) }));
+                setSteps([...steps, ...formatted]);
+            }
+        } catch (e: any) {
+            console.error(e);
+            alert("AI 分析失敗: " + (e.message || "未知錯誤"));
+        } finally {
+            setIsAiLoading(false);
+        }
     };
 
     return (
@@ -154,6 +168,27 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
                     </div>
                 </div>
             </div>
+
+            {/* Distinct Basis (Conditional) */}
+            {method === 'distcount' && (
+                <div className="space-y-3 animate-in fade-in slide-in-from-top-2 mb-8">
+                    <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">不重複依據 (Distinct By)</label>
+                    <div className="relative">
+                        <select
+                            className="w-full bg-white border-2 rounded-xl px-4 py-4 font-bold text-lg text-indigo-700 outline-none border-indigo-200 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-50 appearance-none cursor-pointer"
+                            value={distinctBasis}
+                            onChange={(e) => setDistinctBasis(e.target.value)}
+                        >
+                            <option value="Encounter.id">就醫號 (Encounter)</option>
+                            <option value="Patient.id">病歷號 (Patient ID)</option>
+                            <option value="Patient.identifier">身分證號 (ID No)</option>
+                        </select>
+                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-400">
+                            <ChevronDown size={20} />
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Description Block */}
             <div className="mb-8 space-y-3">
@@ -234,6 +269,6 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
                     儲存要素
                 </button>
             </div>
-        </div>
+        </div >
     );
 }

@@ -6,9 +6,9 @@ import {
     Plus, Trash2, Database, Sparkles, Activity, MessageSquare, Zap,
     Loader2, Link2, Settings2, X, Info, Code, HelpCircle,
     Layers, ChevronDown, Brain, Calculator, Hash, Tag, Replace, ArrowRight, Minus, Divide, Percent, Search,
-    AlertTriangle, Wand2, Sparkle, Users
+    AlertTriangle, Wand2, Sparkle, Users, Timer
 } from 'lucide-react';
-import { getAiFieldSuggestions } from '@/services/gemini';
+import { getAiFieldSuggestions } from '@/app/actions/ai';
 import { fetchFhirValues } from '@/services/fhir';
 import { useSettings } from '@/contexts/SettingsContext';
 import { RESOURCE_CONFIG, PREDEFINED_VALUES } from '@/components/indicator/resource-config';
@@ -249,6 +249,7 @@ export const CriterionRow: React.FC<{
                                     <option value="indicator_result">引用指標</option>
                                     <option value="factor">要素</option>
                                     <option value="constant">自訂常數</option>
+                                    <option value="calculated_field">公式/時間 (Formula)</option>
                                 </select>
                             </div>
                         </div>
@@ -612,19 +613,53 @@ export const CriterionRow: React.FC<{
                                         label="要素 (Factor)"
                                         value={step.value || ''}
                                         placeholder="請選擇要素..."
-                                        options={availableFactors.map(f => ({ value: f.name, label: f.name }))} // Aligning with Name-based matching for now as per sync logic
+                                        options={availableFactors.map(f => ({ value: f.id, label: f.name }))}
                                         onChange={(v) => {
-                                            // Find the factor by name to get ID if needed, but keeping simple value for now or switching to ID if backend requires
-                                            // Given the sync used UUIDs but user said "Unknown", likely the UUIDs differ. Re-selecting by Name is safest.
                                             onUpdate({ value: v });
                                         }}
+                                        renderSelected={(opt) => opt.label}
                                     />
+                                    {/* Auto-Correction for Legacy Name Values */}
+                                    {step.value && !availableFactors.find(f => f.id === step.value) && (
+                                        <div className="text-[10px] text-amber-500 px-2 mt-1">
+                                            {(() => {
+                                                // Try to find by name
+                                                const match = availableFactors.find(f => f.name === step.value);
+                                                if (match) {
+                                                    // Auto-update to ID
+                                                    setTimeout(() => onUpdate({ value: match.id }), 0);
+                                                    return <span>Auto-linking to {match.name}...</span>;
+                                                }
+                                                return <span>Unrecognized Factor: {step.value}</span>;
+                                            })()}
+                                        </div>
+                                    )}
                                     {/* Show raw ID if it doesn't match a name in the list, to help debug */}
                                     {step.value && !availableFactors.find(f => f.name === step.value) && (
                                         <div className="text-[10px] text-slate-400 px-2">
                                             Original Value: {step.value}
                                         </div>
                                     )}
+                                </div>
+                            </div>
+                        ) : step.valueType === 'calculated_field' ? (
+                            <div className="flex gap-2 h-full items-center">
+                                <div className="flex-1 flex flex-col gap-1.5 ">
+                                    <div className="flex items-center px-1 h-5 overflow-hidden"><label className="text-[12px] font-black text-slate-400 uppercase tracking-widest leading-none">公式 (Formula)</label></div>
+                                    <input type="text" className="w-full bg-slate-50 border-2 border-transparent rounded-xl px-4 py-2 text-[14px] font-black text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all h-[64px]" value={step.path || 'period.end - period.start'} onChange={(e) => onUpdate({ path: e.target.value })} placeholder="e.g. period.end - period.start" />
+                                </div>
+                                <div className="w-[100px] flex flex-col gap-1.5">
+                                    <div className="flex items-center px-1 h-5 overflow-hidden"><label className="text-[12px] font-black text-slate-400 uppercase tracking-widest leading-none">判斷 (Cond)</label></div>
+                                    <input type="text" className="w-full bg-slate-50 border-2 border-transparent rounded-xl px-4 py-2 text-[14px] font-black text-slate-700 outline-none focus:border-indigo-500 focus:bg-white transition-all h-[64px]" value={step.value} onChange={(e) => onUpdate({ value: e.target.value })} placeholder="> 24 hours" />
+                                </div>
+                                <div className="flex items-center pt-6 px-2">
+                                    <label className="flex items-center gap-2 cursor-pointer group">
+                                        <div className={`w-5 h-5 rounded border-2 flex items-center justify-center transition-all ${step.autoHandleNullEnd ? 'bg-indigo-600 border-indigo-600' : 'border-slate-300 bg-white group-hover:border-indigo-400'}`}>
+                                            {step.autoHandleNullEnd && <Users size={12} className="text-white" />}
+                                        </div>
+                                        <input type="checkbox" className="hidden" checked={step.autoHandleNullEnd || false} onChange={(e) => onUpdate({ autoHandleNullEnd: e.target.checked })} />
+                                        <span className={`text-xs font-bold select-none ${step.autoHandleNullEnd ? 'text-indigo-700' : 'text-slate-500'}`}>未出院以當前算 (Use Now)</span>
+                                    </label>
                                 </div>
                             </div>
                         ) : (

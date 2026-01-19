@@ -1,7 +1,7 @@
 
 import React, { useState, useRef, useEffect } from 'react';
 import { MessageSquare, Send, X, Bot, User, Loader2, Sparkles, Maximize2, Minimize2 } from 'lucide-react';
-import { chatWithGemini } from '@/services/gemini';
+import { chatWithAi } from '@/app/actions/ai';
 import { ChatMessage } from './types';
 
 export const AiAssistant: React.FC = () => {
@@ -33,12 +33,18 @@ export const AiAssistant: React.FC = () => {
         try {
             // Build conversation history for context
             const history = messages.slice(-10); // Keep last 10 messages for context
-            const response = await chatWithGemini([...history, userMsg]);
+
+            // Convert to simple format for server action if needed, or cast types
+            // The server action expects basic ChatMessage. 
+            // We strip 'thinking' or other extra fields if they exist to be safe, though TS overlap handles most.
+            const apiMessages = [...history, userMsg].map(m => ({ role: m.role, content: m.content }));
+
+            const response = await chatWithAi(apiMessages);
 
             const aiMsg: ChatMessage = {
                 role: 'assistant',
                 content: response.text,
-                thinking: response.thinking
+                // thinking: response.thinking // Server action doesn't return thinking yet
             };
             setMessages(prev => [...prev, aiMsg]);
         } catch (error) {
@@ -107,8 +113,8 @@ export const AiAssistant: React.FC = () => {
                                 </div>
                             )}
                             <div className={`p-4 rounded-2xl text-sm font-medium leading-relaxed whitespace-pre-wrap shadow-sm ${msg.role === 'user'
-                                    ? 'bg-slate-900 text-white rounded-tr-none'
-                                    : 'bg-white text-slate-700 border border-slate-200 rounded-tl-none'
+                                ? 'bg-slate-900 text-white rounded-tr-none'
+                                : 'bg-white text-slate-700 border border-slate-200 rounded-tl-none'
                                 }`}>
                                 {msg.content}
                             </div>

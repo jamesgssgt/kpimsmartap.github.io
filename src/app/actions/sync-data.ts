@@ -24,7 +24,7 @@ async function fetchFhir(url: string) {
     }
 }
 
-async function fetchByIds(resourceType: string, ids: string[]) {
+async function fetchByIds(baseUrl: string, resourceType: string, ids: string[]) {
     if (!ids.length) return [];
     const uniqueIds = Array.from(new Set(ids));
     const results = [];
@@ -33,7 +33,7 @@ async function fetchByIds(resourceType: string, ids: string[]) {
     for (let i = 0; i < uniqueIds.length; i += 50) {
         const chunk = uniqueIds.slice(i, i + 50);
         const idsStr = chunk.join(",");
-        const data = await fetchFhir(`${FHIR_SERVER_URL}/${resourceType}?_id=${idsStr}&_count=100`);
+        const data = await fetchFhir(`${baseUrl}/${resourceType}?_id=${idsStr}&_count=100`);
         if (data && data.entry) {
             results.push(...data.entry.map((e: any) => e.resource));
         }
@@ -94,6 +94,10 @@ export async function syncFhirData() {
         const supabase = await createClient();
         const START_DATE = getStartDate();
 
+        // 0. Get FHIR URL from System Table
+        const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
+        const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL; // Fallback to hardcoded if missing
+
         // 1. Fetch KPI Definitions & Logic
         const { data: kpiDefs, error: defError } = await supabase.from("kpi_definitions").select("*");
         if (defError) throw defError;
@@ -131,7 +135,7 @@ export async function syncFhirData() {
 
             // Fetch Base Resources
             // We limit to 200 to avoid overload
-            let url = `${FHIR_SERVER_URL}/${baseResource}?_count=200`;
+            let url = `${activeFhirUrl}/${baseResource}?_count=200`;
             // Add date filter if applicable (Procedure, Encounter)
             if (['Procedure', 'Encounter'].includes(baseResource)) {
                 url += `&date=ge${START_DATE}`;
@@ -146,8 +150,8 @@ export async function syncFhirData() {
             const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
             const encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id); // Procedure/Obs often have encounter
 
-            const patients = await fetchByIds("Patient", patIds);
-            const encounters = await fetchByIds("Encounter", encIds);
+            const patients = await fetchByIds(activeFhirUrl, "Patient", patIds);
+            const encounters = await fetchByIds(activeFhirUrl, "Encounter", encIds);
 
             const patMap = new Map(patients.map((p: any) => [p.id, p]));
             const encMap = new Map(encounters.map((e: any) => [e.id, e]));

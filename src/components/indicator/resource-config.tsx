@@ -107,6 +107,7 @@ export const RESOURCE_CONFIG: Record<FhirResource, { color: string; icon: any; l
         paths: [
             { value: 'class', label: '就醫類別 (class)' },
             { value: 'class.code', label: '就醫類別代碼 (class.code)' },
+            { value: 'class.coding.code', label: '就醫類別代碼 (class.coding.code)' },
             { value: 'status', label: '就醫狀態 (status)' },
             { value: 'type', label: '就醫科別/類型 (type)' },
             { value: 'serviceType', label: '服務類型 (serviceType)' },
@@ -195,9 +196,9 @@ export const PREDEFINED_VALUES: Record<string, { value: string; label: string; d
         { value: 'not-done', label: 'not-done', description: '未執行' }
     ],
     'Encounter.status': [
-        { value: 'finished', label: 'finished', description: '已結束' },
-        { value: 'in-progress', label: 'in-progress', description: '進行中' },
-        { value: 'planned', label: 'planned', description: '已計畫' }
+        { value: 'finished', label: '已結束 (finished)', description: '已結束' },
+        { value: 'in-progress', label: '進行中 (in-progress)', description: '進行中' },
+        { value: 'planned', label: '已計畫 (planned)', description: '已計畫' }
     ],
     'Observation.status': [
         { value: 'final', label: 'final', description: '最終報告' },

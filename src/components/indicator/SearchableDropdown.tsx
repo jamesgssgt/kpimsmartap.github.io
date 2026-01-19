@@ -97,7 +97,7 @@ export const SearchableDropdown: React.FC<{
                             <div>
                                 <h3 className="text-xl font-black text-slate-800 flex items-center gap-2">
                                     <Database className="text-indigo-600" size={24} />
-                                    {label} 管理
+                                    {label} 管理 ({filteredOptions.length}/{options.length})
                                 </h3>
                                 <p className="text-xs font-bold text-slate-400 mt-1 italic">搜尋並選擇所需內容</p>
                             </div>

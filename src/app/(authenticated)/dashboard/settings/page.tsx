@@ -9,8 +9,11 @@ import { Label } from "@/components/ui/label";
 import { Switch } from "@/components/ui/switch";
 import { DataGenerator } from "@/components/DataGenerator";
 import { useSettings } from "@/contexts/SettingsContext";
+import { AiSettingsTable } from "@/components/settings/AiSettingsTable";
 
 import { syncFhirData } from "@/app/actions/sync-data";
+import { saveSystemSetting, getSystemSettings } from "@/app/actions/system";
+import { SystemSetting } from "@/types/system";
 
 export default function SettingsPage() {
     const [fhirUrl, setFhirUrl] = useState(SMART_CONFIG.iss);
@@ -20,23 +23,50 @@ export default function SettingsPage() {
     const { enableAi, setEnableAi } = useSettings();
 
     // Load from LocalStorage on mount
+    // Load from DB or LocalStorage on mount
     useEffect(() => {
-        const stored = localStorage.getItem("KPIM_FHIR_URL");
-        if (stored) {
-            setFhirUrl(stored);
-        }
+        const loadSettings = async () => {
+            // Try DB first
+            const res = await getSystemSettings(2); // Type 2 = General
+            const dbFhir = res.success ? res.data?.find(d => d.SysCode === 'FHIR_SERVER') : null;
+
+            if (dbFhir && dbFhir.SysValue) {
+                setFhirUrl(dbFhir.SysValue);
+                // Sync local
+                localStorage.setItem("KPIM_FHIR_URL", dbFhir.SysValue);
+            } else {
+                // Fallback to local
+                const stored = localStorage.getItem("KPIM_FHIR_URL");
+                if (stored) {
+                    setFhirUrl(stored);
+                }
+            }
+        };
+        loadSettings();
     }, []);
 
-    const handleSave = () => {
+    const handleSave = async () => {
         setLoading(true);
+        // Save to LocalStorage (client-side backup/cache)
         localStorage.setItem("KPIM_FHIR_URL", fhirUrl);
 
-        // Simulate network delay
-        setTimeout(() => {
-            setLoading(false);
+        // Save to System Table (Server-side source of truth)
+        // We use SysCode: 'FHIR_SERVER', SysType: 2 (General Config)
+        const sysSetting: SystemSetting = {
+            SysCode: 'FHIR_SERVER',
+            SysName: 'Default FHIR Server',
+            SysType: 2,
+            SysValue: fhirUrl
+        };
+        const res = await saveSystemSetting(sysSetting);
+
+        setLoading(false);
+        if (res.success) {
             setSaved(true);
             setTimeout(() => setSaved(false), 2000);
-        }, 500);
+        } else {
+            alert("儲存到伺服器失敗: " + res.error);
+        }
     };
 
     const handleSync = async () => {
@@ -61,23 +91,25 @@ export default function SettingsPage() {
 
             <Card>
                 <CardHeader>
-                    <CardTitle>AI 智慧建議設定</CardTitle>
+                    <CardTitle>AI 智慧建議功能</CardTitle>
                     <CardDescription>
-                        控制是否啟用系統中的 AI 輔助功能，包含指標建議、代碼生成與對話助手。
+                        控制是否啟用系統中的前端 AI 輔助功能 (如：指標建議、代碼生成)。此開關不影響後端模型配置。
                     </CardDescription>
                 </CardHeader>
                 <CardContent className="space-y-4">
                     <div className="flex items-center justify-between space-x-2">
                         <Label htmlFor="ai-mode" className="flex flex-col space-y-1">
-                            <span>啟用 AI 智慧建議</span>
+                            <span>啟用前端 AI 輔助</span>
                             <span className="font-normal text-[0.8rem] text-muted-foreground">
-                                若關閉，所有 AI 相關按鈕與對話助手將被隱藏。
+                                若關閉，相關 UI 按鈕將被隱藏。
                             </span>
                         </Label>
                         <Switch id="ai-mode" checked={enableAi} onCheckedChange={setEnableAi} />
                     </div>
                 </CardContent>
             </Card>
+
+            <AiSettingsTable />
 
             <Card>
                 <CardHeader>

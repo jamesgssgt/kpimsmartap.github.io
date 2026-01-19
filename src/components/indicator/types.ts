@@ -11,7 +11,7 @@ export type CalculationAction =
     | 'MULTIPLY'  // 數值相乘 (*)
     | 'DIVIDE';   // 數值相除 (/)
 
-export type ValueType = 'fhir_filter' | 'indicator_result' | 'constant' | 'factor';
+export type ValueType = 'fhir_filter' | 'indicator_result' | 'constant' | 'factor' | 'calculated_field';
 
 export interface CalculationStep {
     id: string;
@@ -24,6 +24,8 @@ export interface CalculationStep {
     // 共通比對值 / 指標ID / 常數
     value: string;
     notes?: string;
+    // Special flags
+    autoHandleNullEnd?: boolean; // 若為true，當 period.end 為空時使用當前時間計算
 }
 
 export interface QualityIndicator {
@@ -37,6 +39,8 @@ export interface QualityIndicator {
     exclusionSteps: CalculationStep[];   // 排除運算步驟
     numeratorCalculationMethod?: 'sum' | 'count' | 'distcount';
     denominatorCalculationMethod?: 'sum' | 'count' | 'distcount';
+    numeratorDistinctBasis?: string;   // 分子不重複依據 (e.g. Encounter.id, Patient.id)
+    denominatorDistinctBasis?: string; // 分母不重複依據
     frequency: '每日' | '每週' | '每月' | '每季' | '每半年' | '每年';
     targetValue?: number;
     targetOperator?: '>=' | '<=' | '>' | '<' | '=';
@@ -80,6 +84,7 @@ export interface Factor {
     name: string;
     description: string;
     method: 'sum' | 'count' | 'distcount';
+    distinctBasis?: string; // 不重複依據 (e.g. Encounter.id)
     sourceType: 'FHIR' | 'Manual';
     steps: CalculationStep[];
     updatedAt?: string;

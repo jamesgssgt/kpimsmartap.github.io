@@ -8,7 +8,7 @@ import {
     Layers, ChevronDown, Brain, Calculator, Hash, Tag, Replace, ArrowRight, Minus, Divide, Percent, Search,
     AlertTriangle, Wand2, Sparkle, Users, RefreshCw
 } from 'lucide-react';
-import { analyzeSectionDefinition, getAiFieldSuggestions, analyzeFullIndicator } from '@/services/gemini';
+import { analyzeSectionDefinition, getAiFieldSuggestions, analyzeFullIndicator } from '@/app/actions/ai';
 import { fetchFhirValues } from '@/services/fhir';
 import { useSettings } from '@/contexts/SettingsContext';
 import { saveIndicator } from '@/app/actions/save-indicator';
@@ -47,8 +47,11 @@ const Section: React.FC<{
     saveAttempted?: boolean;
     calculationMethod?: 'sum' | 'count' | 'distcount';
     setCalculationMethod?: (val: 'sum' | 'count' | 'distcount') => void;
+    distinctBasis?: string;
+    setDistinctBasis?: (val: string) => void;
 }> = ({ title, steps, setSteps, draft, setDraft, sectionKey, color, icon: Icon, placeholder, isLoading, onSmartAnalyze, onAddStep, availableIndicators, availableFactors, indicatorName,
-    indicatorDescription, sectionName, setSectionName, saveAttempted, calculationMethod, setCalculationMethod
+    indicatorDescription, sectionName, setSectionName, saveAttempted, calculationMethod, setCalculationMethod,
+    distinctBasis, setDistinctBasis
 }) => {
         const { enableAi } = useSettings();
         return (
@@ -84,20 +87,38 @@ const Section: React.FC<{
                         </div>
                         {setCalculationMethod && (
                             <div className="space-y-2">
-                                <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">計算方式 (Calculation Method)</label>
-                                <div className="relative">
-                                    <select
-                                        className="w-full bg-white border-2 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none border-slate-200 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-50 appearance-none cursor-pointer"
-                                        value={calculationMethod || 'sum'}
-                                        onChange={(e) => setCalculationMethod(e.target.value as any)}
-                                    >
-                                        <option value="sum">加總 (Sum)</option>
-                                        <option value="count">計數 (Count)</option>
-                                        <option value="distcount">不重複計數 (Distinct Count)</option>
-                                    </select>
-                                    <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
-                                        <ChevronDown size={20} />
+                                <label className="text-sm font-black text-slate-500 uppercase tracking-widest ml-1">計算方式 (Method)</label>
+                                <div className="flex gap-2">
+                                    <div className="relative flex-1">
+                                        <select
+                                            className="w-full bg-white border-2 rounded-xl px-4 py-3 font-bold text-slate-700 outline-none border-slate-200 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-50 appearance-none cursor-pointer"
+                                            value={calculationMethod || 'sum'}
+                                            onChange={(e) => setCalculationMethod(e.target.value as any)}
+                                        >
+                                            <option value="sum">加總 (Sum)</option>
+                                            <option value="count">計數 (Count)</option>
+                                            <option value="distcount">不重複計數 (Distinct Count)</option>
+                                        </select>
+                                        <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-slate-400">
+                                            <ChevronDown size={20} />
+                                        </div>
                                     </div>
+                                    {calculationMethod === 'distcount' && setDistinctBasis && (
+                                        <div className="relative w-48 animate-in slide-in-from-left-2 fade-in">
+                                            <select
+                                                className="w-full bg-white border-2 rounded-xl px-4 py-3 font-bold text-indigo-700 outline-none border-indigo-200 focus:border-indigo-600 focus:ring-4 focus:ring-indigo-50 appearance-none cursor-pointer"
+                                                value={distinctBasis || 'Encounter.id'}
+                                                onChange={(e) => setDistinctBasis(e.target.value)}
+                                            >
+                                                <option value="Encounter.id">就醫號 (Encounter)</option>
+                                                <option value="Patient.id">病歷號 (Patient ID)</option>
+                                                <option value="Patient.identifier">身分證號 (ID No)</option>
+                                            </select>
+                                            <div className="absolute right-4 top-1/2 -translate-y-1/2 pointer-events-none text-indigo-400">
+                                                <ChevronDown size={20} />
+                                            </div>
+                                        </div>
+                                    )}
                                 </div>
                             </div>
                         )}
@@ -149,6 +170,8 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
     const [exclusionSteps, setExclusionSteps] = useState<CalculationStep[]>([]);
     const [numeratorMethod, setNumeratorMethod] = useState<'sum' | 'count' | 'distcount'>('sum');
     const [denominatorMethod, setDenominatorMethod] = useState<'sum' | 'count' | 'distcount'>('sum');
+    const [numeratorDistinctBasis, setNumeratorDistinctBasis] = useState<string>('Encounter.id');
+    const [denominatorDistinctBasis, setDenominatorDistinctBasis] = useState<string>('Encounter.id');
     const [frequency, setFrequency] = useState<'每日' | '每週' | '每月' | '每季' | '每半年' | '每年'>('每月');
     const [targetValue, setTargetValue] = useState<string>('');
     const [targetOperator, setTargetOperator] = useState<'>=' | '<=' | '>' | '<' | '='>('>=');
@@ -177,6 +200,8 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
             setExclusionSteps(initialData.exclusionSteps || []);
             setNumeratorMethod(initialData.numeratorCalculationMethod || 'sum');
             setDenominatorMethod(initialData.denominatorCalculationMethod || 'sum');
+            setNumeratorDistinctBasis(initialData.numeratorDistinctBasis || 'Encounter.id');
+            setDenominatorDistinctBasis(initialData.denominatorDistinctBasis || 'Encounter.id');
             setFrequency(initialData.frequency || '每月');
             setTargetValue(initialData.targetValue?.toString() || '');
             setTargetOperator(initialData.targetOperator || '>=');
@@ -217,7 +242,7 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
             if (isRateLimit) {
                 alert("免費資源已用完，請等待資源提供完成時間。");
             } else {
-                alert("智慧建議生成失敗，請稍後再試。");
+                alert(`智慧建議生成失敗: ${message}`);
             }
         } finally {
             setIsLoading('full');
@@ -243,7 +268,7 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
             if (isRateLimit) {
                 alert("免費資源已用完，請等待資源提供完成時間。");
             } else {
-                alert("分析失敗。");
+                alert(`分析失敗: ${message}`);
             }
         }
         finally { setIsLoading(null); }
@@ -264,6 +289,8 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
             numeratorSteps, denominatorSteps, exclusionSteps,
             numeratorCalculationMethod: numeratorMethod,
             denominatorCalculationMethod: denominatorMethod,
+            numeratorDistinctBasis: numeratorMethod === 'distcount' ? numeratorDistinctBasis : undefined,
+            denominatorDistinctBasis: denominatorMethod === 'distcount' ? denominatorDistinctBasis : undefined,
             frequency: frequency,
             targetValue: targetValue ? parseFloat(targetValue) : undefined,
             targetOperator: targetOperator
@@ -346,7 +373,9 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
                         numeratorSteps: (res.data?.numeratorSteps || []) as any,
                         denominatorSteps: (res.data?.denominatorSteps || []) as any,
                         numeratorName: res.data?.numeratorName || numeratorName,
-                        denominatorName: res.data?.denominatorName || denominatorName
+                        denominatorName: res.data?.denominatorName || denominatorName,
+                        numeratorDistinctBasis: numeratorDistinctBasis,
+                        denominatorDistinctBasis: denominatorDistinctBasis
                     };
                     onSave(updatedIndicator);
                 }
@@ -492,11 +521,13 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
                 {(!focusSection || focusSection === 'den') && (
                     <Section title="分母 (Denominator)" sectionKey="den" steps={denominatorSteps} setSteps={setDenominatorSteps} draft={denDraft} setDraft={setDenDraft} color="border-slate-100 bg-slate-50/30" icon={Users} placeholder="輸入分母條件，AI 將協助自動填寫運算邏輯..." onSmartAnalyze={handleSmartAnalyze} onAddStep={handleAddStep} isLoading={isLoading} availableIndicators={availableIndicators} availableFactors={availableFactors} indicatorName={name} indicatorDescription={description}
                         sectionName={denominatorName} setSectionName={setDenominatorName} saveAttempted={saveAttempted} calculationMethod={denominatorMethod} setCalculationMethod={setDenominatorMethod}
+                        distinctBasis={denominatorDistinctBasis} setDistinctBasis={setDenominatorDistinctBasis}
                     />
                 )}
                 {(!focusSection || focusSection === 'num') && (
                     <Section title="分子 (Numerator)" sectionKey="num" steps={numeratorSteps} setSteps={setNumeratorSteps} draft={numDraft} setDraft={setNumDraft} color="border-indigo-100 bg-indigo-50/20" icon={Calculator} placeholder="輸入合格條件，AI 將協助自動填寫運算邏輯..." onSmartAnalyze={handleSmartAnalyze} onAddStep={handleAddStep} isLoading={isLoading} availableIndicators={availableIndicators} availableFactors={availableFactors} indicatorName={name} indicatorDescription={description}
                         sectionName={numeratorName} setSectionName={setNumeratorName} saveAttempted={saveAttempted} calculationMethod={numeratorMethod} setCalculationMethod={setNumeratorMethod}
+                        distinctBasis={numeratorDistinctBasis} setDistinctBasis={setNumeratorDistinctBasis}
                     />
                 )}
             </div>
