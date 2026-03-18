@@ -553,3 +553,166 @@ export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic
         return { success: false, message: "清除失敗: " + String(err) };
     }
 }
+
+// 新增: 產生 FHIR 測試案例 JSON (直接匯出，不寫入 DB / FHIR Server)
+export async function exportFHIRTestCases() {
+    try {
+        const bundle = {
+            resourceType: "Bundle",
+            type: "collection",
+            entry: [] as any[]
+        };
+
+        const addResource = (res: any) => {
+            bundle.entry.push({
+                fullUrl: `urn:uuid:${res.id}`,
+                resource: res
+            });
+        };
+
+        // 1. Organization (Hospital & Dept)
+        const hospId = "mock-hosp-" + Date.now();
+        addResource({
+            resourceType: "Organization",
+            id: hospId,
+            name: "測試綜合醫院",
+            type: [{ text: "Hospital" }]
+        });
+
+        const departments = [
+            { id: `mock-dept-1`, name: "一般外科", docs: ["劉醫師", "張醫師"] },
+            { id: `mock-dept-2`, name: "心臟外科", docs: ["吳醫師", "蔡醫師"] },
+            { id: `mock-dept-3`, name: "神經外科", docs: ["王醫師", "李醫師"] },
+            { id: `mock-dept-4`, name: "泌尿外科", docs: ["陳醫師", "林醫師"] },
+            { id: `mock-dept-5`, name: "骨科", docs: ["黃醫師", "莊醫師"] }
+        ];
+
+        const deptDocMap: Record<string, string[]> = {};
+
+        departments.forEach(dept => {
+            addResource({
+                resourceType: "Organization",
+                id: dept.id,
+                name: dept.name,
+                partOf: { reference: `urn:uuid:${hospId}` }
+            });
+            
+            deptDocMap[dept.id] = [];
+            dept.docs.forEach((docName, idx) => {
+                const docId = `mock-doc-${dept.id}-${idx}`;
+                deptDocMap[dept.id].push(docId);
+                addResource({
+                    resourceType: "Practitioner",
+                    id: docId,
+                    name: [{ text: docName }]
+                });
+            });
+        });
+
+        const startDate = new Date("2025-11-01T00:00:00Z");
+        const endDate = new Date("2026-01-30T23:59:59Z");
+        const dateRangeMs = endDate.getTime() - startDate.getTime();
+
+        // 目標：每科 300 人 (總計約 1500)
+        // 死亡人數控制在 15 人內
+        const CASES_PER_DEPT = 310;
+        let deathCount = 0;
+        const targetDeath = 13; // 13 is less than 15
+
+        let globalCounter = 0;
+
+        const createTestPatient = (deptId: string, deptName: string) => {
+            globalCounter++;
+            const patId = `mock-pat-${Date.now()}-${globalCounter}`;
+            const gender = globalCounter % 2 === 0 ? "male" : "female";
+            const age = 50 + (globalCounter % 30);
+            
+            // Random birthdate
+            const birth = new Date(startDate.getTime() - age * 365.25 * 24 * 60 * 60 * 1000);
+            
+            // Random operation date within 2025-11-01 to 2026-01-30
+            const randomOffset = Math.random() * dateRangeMs;
+            const opStart = new Date(startDate.getTime() + randomOffset);
+            
+            // Random duration 1-4 hrs
+            const durationMs = (1 + Math.random() * 3) * 60 * 60 * 1000;
+            const opEnd = new Date(opStart.getTime() + durationMs);
+            
+            let isMortality = false;
+            // Spread deaths across different dates evenly until reaching target
+            if (deathCount < targetDeath && Math.random() < 0.01) {
+                isMortality = true;
+                deathCount++;
+            }
+
+            let dischargeCode = isMortality ? "exp" : "home";
+            let deathTime = isMortality ? new Date(opEnd.getTime() + (Math.random() * 40 + 2) * 60 * 60 * 1000) : null;
+
+            addResource({
+                resourceType: "Patient",
+                id: patId,
+                gender: gender,
+                birthDate: birth.toISOString().split('T')[0],
+                deceasedDateTime: isMortality && deathTime ? deathTime.toISOString() : undefined
+            });
+
+            const encId = `mock-enc-${Date.now()}-${globalCounter}`;
+            const dischargeDate = deathTime || new Date(opEnd.getTime() + (3 + Math.random() * 7) * 24 * 60 * 60 * 1000);
+            addResource({
+                resourceType: "Encounter",
+                id: encId,
+                status: "finished",
+                class: { code: "IMP" }, // Inpatient
+                subject: { reference: `urn:uuid:${patId}` },
+                serviceProvider: { reference: `urn:uuid:${deptId}`, display: deptName },
+                hospitalization: {
+                    dischargeDisposition: { coding: [{ code: dischargeCode }] }
+                },
+                period: {
+                    start: new Date(opStart.getTime() - (1 + Math.random()) * 24 * 60 * 60 * 1000).toISOString(),
+                    end: dischargeDate.toISOString()
+                }
+            });
+
+            // Antibiotics: usually 90% success
+            const isAbSuccess = Math.random() > 0.1;
+
+            const procId = `mock-proc-${Date.now()}-${globalCounter}`;
+            addResource({
+                resourceType: "Procedure",
+                id: procId,
+                status: "completed",
+                subject: { reference: `urn:uuid:${patId}` },
+                encounter: { reference: `urn:uuid:${encId}` },
+                performedPeriod: {
+                    start: opStart.toISOString(),
+                    end: opEnd.toISOString()
+                },
+                code: {
+                    coding: [{
+                        system: "http://hl7.org/fhir/sid/icd-10-pcs",
+                        code: "0DTJ0ZZ",
+                        display: "Resection of Appendix"
+                    }]
+                },
+                performer: [{ actor: { reference: `urn:uuid:${deptDocMap[deptId][globalCounter % 2]}` } }],
+                note: [{
+                    text: `Antibiotics given 1 hour before: ${isAbSuccess ? "Yes" : "No"}`
+                }]
+            });
+        };
+
+        // Generate the test cases
+        departments.forEach(dept => {
+            for (let i = 0; i < CASES_PER_DEPT; i++) {
+                createTestPatient(dept.id, dept.name);
+            }
+        });
+
+        return { success: true, data: bundle };
+    } catch (err) {
+        console.error("Export FHIR Error:", err);
+        return { success: false, message: "匯出失敗: " + String(err) };
+    }
+}
+

@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { generateData, clearGeneratedData } from "@/app/actions/generate-data";
+import { generateData, clearGeneratedData, exportFHIRTestCases } from "@/app/actions/generate-data";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -12,7 +12,7 @@ import {
     DialogTitle,
     DialogTrigger,
 } from "@/components/ui/dialog";
-import { Loader2 } from "lucide-react";
+import { Loader2, Download } from "lucide-react";
 
 import { useRouter } from "next/navigation";
 
@@ -40,6 +40,31 @@ export function DataGenerator() {
         router.refresh();
     };
 
+    const handleExportFHIR = async () => {
+        setLoading(true);
+        try {
+            const res = await exportFHIRTestCases();
+            if (res.success && res.data) {
+                const jsonString = JSON.stringify(res.data, null, 2);
+                const blob = new Blob([jsonString], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const link = document.createElement("a");
+                link.href = url;
+                link.download = `fhir_test_cases_${new Date().getTime()}.json`;
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+                URL.revokeObjectURL(url);
+            } else {
+                alert(res.message);
+            }
+        } catch (error) {
+            console.error("Export FHIR Error:", error);
+            alert("匯出發生錯誤");
+        }
+        setLoading(false);
+    };
+
     const handleClose = () => {
         setOpen(false);
         setResult(null);
@@ -48,10 +73,10 @@ export function DataGenerator() {
     };
 
     return (
-        <div className="flex items-center gap-4">
+        <div className="flex flex-wrap items-center gap-4">
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>
-                    <Button variant="outline" type="button">開啟資料生成器</Button>
+                    <Button variant="outline" type="button" disabled={loading}>開啟資料生成器</Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-[425px]" onInteractOutside={(e) => e.preventDefault()}>
                     {!result ? (
@@ -102,6 +127,17 @@ export function DataGenerator() {
                     )}
                 </DialogContent>
             </Dialog >
+
+            <Button
+                variant="outline"
+                onClick={handleExportFHIR}
+                disabled={loading}
+                type="button"
+                className="gap-2"
+            >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                匯出測試案例(FHIR JSON)
+            </Button>
 
             <Button
                 variant="destructive"

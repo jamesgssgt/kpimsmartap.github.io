@@ -100,6 +100,10 @@ export async function GET(request: NextRequest) {
         if (!body.has("client_id")) {
             body.append("client_id", SMART_CONFIG.clientId);
         }
+        // Include client_secret for confidential clients
+        if (SMART_CONFIG.clientSecret) {
+            body.append("client_secret", SMART_CONFIG.clientSecret);
+        }
     }
 
     try {
