@@ -309,6 +309,11 @@ export async function GET(request: NextRequest) {
             });
         }
 
+        // --- 防呆：移除過長的除錯日誌，避免 Cookie 爆掉 (超過 4KB 會被瀏覽器或 NextJS 阻擋) ---
+        if (identity.debug_log) {
+            delete identity.debug_log;
+        }
+
         response.cookies.set("fhir_user_identity", JSON.stringify(identity), {
             httpOnly: false, // Allow client to read for display
             secure: process.env.NODE_ENV === "production",
