@@ -20,7 +20,7 @@ export default function SettingsPage() {
     const [loading, setLoading] = useState(false);
     const [saved, setSaved] = useState(false);
     const [syncing, setSyncing] = useState(false);
-    const { enableAi, setEnableAi } = useSettings();
+    const { enableAi, setEnableAi, enableFavorites, setEnableFavorites } = useSettings();
 
     // Load from LocalStorage on mount
     // Load from DB or LocalStorage on mount
@@ -105,6 +105,26 @@ export default function SettingsPage() {
                             </span>
                         </Label>
                         <Switch id="ai-mode" checked={enableAi} onCheckedChange={setEnableAi} />
+                    </div>
+                </CardContent>
+            </Card>
+
+            <Card>
+                <CardHeader>
+                    <CardTitle>擴充功能設定</CardTitle>
+                    <CardDescription>
+                        調整儀表板的額外功能顯示。
+                    </CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="flex items-center justify-between space-x-2">
+                        <Label htmlFor="fav-mode" className="flex flex-col space-y-1">
+                            <span>啟用「我的最愛」功能</span>
+                            <span className="font-normal text-[0.8rem] text-muted-foreground">
+                                若開啟，側邊欄將顯示我的最愛捷徑。
+                            </span>
+                        </Label>
+                        <Switch id="fav-mode" checked={enableFavorites} onCheckedChange={setEnableFavorites} />
                     </div>
                 </CardContent>
             </Card>

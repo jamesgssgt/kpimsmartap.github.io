@@ -3,15 +3,17 @@
 import Link from "next/link";
 import { usePathname, useSearchParams } from "next/navigation";
 import { cn } from "@/lib/utils";
+import { useSettings } from "@/contexts/SettingsContext";
 
 export function SidebarNav() {
     const pathname = usePathname();
     const searchParams = useSearchParams();
     const sectionParam = searchParams.get('section');
+    const { enableFavorites } = useSettings();
 
     const links = [
         { href: "/dashboard", label: "Dashboard", exact: true },
-        { href: "/favorites", label: "My Favorites", exact: true },
+        ...(enableFavorites ? [{ href: "/favorites", label: "My Favorites", exact: true }] : []),
         { href: "/indicators", label: "指標管理 (Indicators)" },
         { href: "/elements", label: "要素管理 (Factors)" },
         { href: "/settings/valuesets", label: "專有名詞管理" },

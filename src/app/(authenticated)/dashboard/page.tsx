@@ -61,8 +61,10 @@ export default async function DashboardPage(props: {
                     displayName = identity.name;
                 } else if (identity.sub && (!user || !user.email)) {
                     // Start of fallback: Only show ID if we have NO email
-                    // [UPDATED] Removed "User: " prefix per user request
                     displayName = identity.sub;
+                    if (displayName === "unknown") {
+                        displayName = "未知 Practitioner (請檢視 Token)";
+                    }
                 }
             } catch (e) {
                 // ignore parse error

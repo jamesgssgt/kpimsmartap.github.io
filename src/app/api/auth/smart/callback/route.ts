@@ -146,9 +146,10 @@ export async function GET(request: NextRequest) {
         // Proceed to identity extraction and cookie setting.
 
         // Plan B logic for identity fetching remains above...
-        // Extract Identity (id_token OR Fetch Patient)
+        // Extract Identity (id_token OR Fetch Patient/Practitioner)
+        let primarySub = tokenResponse.patient || tokenResponse.practitioner || tokenResponse.user;
         let identity: any = {
-            sub: tokenResponse.patient || "unknown",
+            sub: primarySub || "unknown",
             iss: iss,
             name: "", // Default to empty so we know if it's missing
             email: "",
@@ -163,7 +164,7 @@ export async function GET(request: NextRequest) {
                 const { decodeJwt } = await import("jose");
                 const claims = decodeJwt(tokenResponse.id_token);
 
-                if (claims.sub) identity.sub = claims.sub as string;
+                if (claims.sub && !primarySub) identity.sub = claims.sub as string;
                 if (claims.email) identity.email = claims.email as string;
 
                 // FIX: Resolve Opaque ID using fhirUser claim (Standard SMART way)
@@ -175,9 +176,17 @@ export async function GET(request: NextRequest) {
                         identity.sub = `${type}/${id}`;
                         identity.debug_log.push(`Resolved fhirUser: ${identity.sub}`);
                     }
+                } else if (claims.profile && typeof claims.profile === "string" && claims.profile.includes("/")) {
+                    const parts = claims.profile.split("/");
+                    if (parts.length >= 2) {
+                        const id = parts[parts.length - 1];
+                        const type = parts[parts.length - 2];
+                        identity.sub = `${type}/${id}`;
+                        identity.debug_log.push(`Resolved profile: ${identity.sub}`);
+                    }
                 }
 
-                const claimName = (claims.name || claims.profile) as string;
+                const claimName = claims.name as string;
                 if (claimName && !claimName.startsWith("http") && !claimName.startsWith("Practitioner/") && !claimName.startsWith("Patient/")) {
                     identity.name = claimName;
                     identity.debug_log.push(`Name from id_token: ${claimName}`);
@@ -189,7 +198,7 @@ export async function GET(request: NextRequest) {
 
         // Plan C: If still empty, assume sub might provide a path to the user resource
         // If sub is a bare ID (e.g. 123), try Practitioner first, then Patient.
-        if (!identity.name && identity.sub && iss) {
+        if (!identity.name && identity.sub && identity.sub !== "unknown" && iss) {
             let targets: string[] = [];
 
             // If it already looks like a resource path (e.g. Practitioner/123), try that first
