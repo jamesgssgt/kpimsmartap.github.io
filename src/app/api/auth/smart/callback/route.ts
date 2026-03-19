@@ -54,7 +54,6 @@ export async function GET(request: NextRequest) {
         code: code!,
         // Use dynamic redirect URI to match the one sent in the launch request
         redirect_uri: `${request.nextUrl.origin}/api/auth/smart/callback`,
-        client_id: SMART_CONFIG.clientId,
     });
 
     if (codeVerifier) {
@@ -94,15 +93,12 @@ export async function GET(request: NextRequest) {
         }
 
     } else {
-        // Fix: Use Standard Public Client Auth (Body Only)
-        // No Authorization header. client_id in body.
-        // We explicitly ensure client_id is in the body below.
-        if (!body.has("client_id")) {
-            body.append("client_id", SMART_CONFIG.clientId);
-        }
-        // Include client_secret for confidential clients
+        // Fix: Use Standard Basic Auth for Confidential Clients, Body only for Public
         if (SMART_CONFIG.clientSecret) {
-            body.append("client_secret", SMART_CONFIG.clientSecret);
+            const credentials = Buffer.from(`${SMART_CONFIG.clientId}:${SMART_CONFIG.clientSecret}`).toString('base64');
+            headers["Authorization"] = `Basic ${credentials}`;
+        } else {
+            body.append("client_id", SMART_CONFIG.clientId);
         }
     }
 
