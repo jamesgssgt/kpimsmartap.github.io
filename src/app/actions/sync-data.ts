@@ -24,6 +24,33 @@ async function fetchFhir(url: string) {
     }
 }
 
+async function fetchFhirAll(url: string, maxItems = 5000) {
+    let results: any[] = [];
+    let currentUrl = url;
+    try {
+        while (currentUrl && results.length < maxItems) {
+            console.log("Fetching FHIR page:", currentUrl);
+            const res = await fetch(currentUrl, { headers: { "Accept": "application/json" } });
+            if (!res.ok) throw new Error(`Status ${res.status}`);
+            const bundle = await res.json();
+            if (bundle && bundle.entry) {
+                results.push(...bundle.entry.map((e: any) => e.resource));
+            }
+            
+            // Find next link
+            const nextLink = bundle.link?.find((l: any) => l.relation === "next");
+            if (nextLink && nextLink.url) {
+                currentUrl = nextLink.url;
+            } else {
+                break;
+            }
+        }
+    } catch (e) {
+        console.error("FHIR FetchAll Error:", e);
+    }
+    return results;
+}
+
 async function fetchByIds(baseUrl: string, resourceType: string, ids: string[]) {
     if (!ids.length) return [];
     const uniqueIds = Array.from(new Set(ids));
@@ -134,17 +161,15 @@ export async function syncFhirData() {
             if (!baseResource) continue;
 
             // Fetch Base Resources
-            // We limit to 200 to avoid overload
-            let url = `${activeFhirUrl}/${baseResource}?_count=200`;
+            // Support Pagination to fetch all generated cases
+            let url = `${activeFhirUrl}/${baseResource}?_count=500`;
             // Add date filter if applicable (Procedure, Encounter)
             if (['Procedure', 'Encounter'].includes(baseResource)) {
                 url += `&date=ge${START_DATE}`;
             }
 
-            const bundle = await fetchFhir(url);
-            if (!bundle || !bundle.entry) continue;
-
-            let resources = bundle.entry.map((e: any) => e.resource);
+            let resources = await fetchFhirAll(url, 5000);
+            if (!resources || resources.length === 0) continue;
 
             // Fetch Context (Patient, Encounter)
             const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
