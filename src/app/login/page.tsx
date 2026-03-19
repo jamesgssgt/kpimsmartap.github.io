@@ -28,9 +28,9 @@ function LoginContent() {
     const supabase = createClient();
 
     const handleStandaloneLaunch = () => {
-        // Redirect to external SMART App Launcher (configured via env)
-        const launcherUrl = process.env.NEXT_PUBLIC_SMART_LAUNCHER_URL || "https://launch.smarthealthit.org";
-        window.location.href = launcherUrl;
+        // Redirect directly to OUR app's SMART launch endpoint to initiate a Provider Standalone Launch.
+        // The backend will use SMART_ISS as the FHIR Server URL.
+        window.location.href = "/api/auth/smart/launch?standalone=true";
     };
 
     const handleClose = () => {

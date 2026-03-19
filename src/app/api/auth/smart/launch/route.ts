@@ -9,26 +9,11 @@ export async function GET(request: NextRequest) {
         let iss = searchParams.get("iss") || SMART_CONFIG.iss;
         let launch = searchParams.get("launch");
 
-        // [CRITICAL FIX] Strict Launch Requirement (No Standalone via this route)
-        // SMART Health IT Sandbox expects EHR-initiated launch (with token).
-        // App-initiated standalone launch (without token) is not supported here and causes crashes.
-
-        // 1. Check for missing launch (Strict)
-        // Catches: null, undefined, literal "undefined"/"null" strings, empty strings
-        if (!launch || launch === "undefined" || launch === "null" || !launch.trim()) {
-            console.warn("SMART Launch called without launch param. Abort.");
-            return NextResponse.redirect(new URL("/login?reason=smart_launch_required", request.url));
-        }
-
-        // 2. Check for truncated/invalid launch (Length Defense)
-        // Relaxed limit from 50 to 5 to allow UUIDs (36 chars) from SMART Sandbox
-        if (launch.length < 5) {
-            console.warn(`SMART Launch called with invalid/short launch token (${launch.length} chars). Abort.`);
-            return NextResponse.redirect(new URL("/login?reason=smart_launch_truncated", request.url));
-        }
+        // Removed Strict Launch Requirement to support Provider Standalone Launch
+        // If 'launch' is missing, it will proceed as a Standalone Launch
 
         // PATCH: Fix "+" becoming space in searchParams
-        if (launch.includes(" ")) {
+        if (launch && launch.includes(" ")) {
             console.log("Restoring '+' in launch token (received as space)");
             launch = launch.replace(/ /g, "+");
         }
