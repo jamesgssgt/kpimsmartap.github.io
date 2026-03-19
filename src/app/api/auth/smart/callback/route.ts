@@ -271,9 +271,74 @@ export async function GET(request: NextRequest) {
         }
 
         // 5. Store Tokens & Session -> Set on the RESPONSE object
-        // Create Redirect Response first
         const redirectUrl = new URL("/dashboard", request.url);
-        const response = NextResponse.redirect(redirectUrl);
+        let authRedirectUrl = redirectUrl.toString();
+
+        // --- 處理 Supabase 使用者對應 (Practitioner to Users Mapping) ---
+        // 我們使用 Service Role Key（如果有設定）來自動幫醫師建立真實的 Supabase `auth.users` 帳號並登入，
+        // 這樣就能正確通過所有 Row Level Security (RLS) 權限控管。
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+
+        if (supabaseUrl && serviceRoleKey) {
+            try {
+                const { createClient } = await import("@supabase/supabase-js");
+                const adminAuthClient = createClient(supabaseUrl, serviceRoleKey, {
+                    auth: { autoRefreshToken: false, persistSession: false }
+                });
+
+                const dummyEmail = identity.email || `${identity.sub.replace('/', '_')}@smart.local`.toLowerCase();
+
+                const { data: usersData, error: listError } = await adminAuthClient.auth.admin.listUsers();
+                let matchedUser = usersData?.users?.find(u => 
+                    u.email === dummyEmail || 
+                    u.user_metadata?.fhir_id === identity.sub
+                );
+
+                if (!matchedUser) {
+                    console.log(`Auto-creating mapped user for FHIR identity: ${identity.sub}`);
+                    const { data: newUser, error: createError } = await adminAuthClient.auth.admin.createUser({
+                        email: dummyEmail,
+                        password: crypto.randomUUID(), 
+                        email_confirm: true,
+                        user_metadata: {
+                            full_name: identity.name,
+                            fhir_id: identity.sub
+                        }
+                    });
+                    
+                    if (createError) {
+                        console.error("Error creating mapped user:", createError);
+                    } else if (newUser?.user) {
+                        matchedUser = newUser.user;
+                    }
+                }
+
+                if (matchedUser && matchedUser.email) {
+                    const { data: linkData, error: linkError } = await adminAuthClient.auth.admin.generateLink({
+                        type: 'magiclink',
+                        email: matchedUser.email,
+                        options: {
+                            redirectTo: redirectUrl.toString()
+                        }
+                    });
+
+                    if (!linkError && linkData?.properties?.action_link) {
+                        console.log("Successfully generated login link for user.", matchedUser.id);
+                        authRedirectUrl = linkData.properties.action_link;
+                    } else {
+                        console.error("Failed to generate magic link:", linkError);
+                    }
+                }
+            } catch (authErr) {
+                console.error("Error during Supabase Auto-Mapping:", authErr);
+            }
+        } else {
+            console.warn("SUPABASE_SERVICE_ROLE_KEY not found. Fallback to anonymous session.");
+        }
+
+        // Create the FINAL Redirect Response before setting cookies
+        const response = NextResponse.redirect(new URL(authRedirectUrl));
 
         console.log("Setting Auth Cookies...", {
             accessToken: tokenResponse.access_token ? "Yes" : "No",
@@ -309,7 +374,6 @@ export async function GET(request: NextRequest) {
             });
         }
 
-        // --- 防呆：移除過長的除錯日誌，避免 Cookie 爆掉 (超過 4KB 會被瀏覽器或 NextJS 阻擋) ---
         if (identity.debug_log) {
             delete identity.debug_log;
         }
@@ -321,9 +385,9 @@ export async function GET(request: NextRequest) {
             sameSite: "lax"
         });
 
-        // Set a visible cookie for client-side to assume we are authenticated via SMART
+        // Set a visible cookie for client-side
         response.cookies.set("smart_authenticated", "1", {
-            httpOnly: false, // Accessible by JS
+            httpOnly: false, 
             secure: process.env.NODE_ENV === "production",
             path: "/",
             sameSite: "lax"

@@ -60,6 +60,17 @@ function LoginContent() {
         // Clear client-side visibility cookie to ensure UI syncs with session state
         document.cookie = "smart_authenticated=; Max-Age=0; path=/;";
 
+        // Catch stray SMART launch parameters and auto-forward
+        const iss = searchParams.get("iss");
+        const launch = searchParams.get("launch");
+        if (iss && launch) {
+            const params = new URLSearchParams();
+            params.set("iss", iss);
+            params.set("launch", launch);
+            window.location.href = `/api/auth/smart/launch?${params.toString()}`;
+            return;
+        }
+
         // Check for specific error params from callback
         const errorParam = searchParams.get("error");
         const reasonParam = searchParams.get("reason");
