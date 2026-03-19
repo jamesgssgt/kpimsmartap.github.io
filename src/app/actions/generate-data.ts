@@ -554,9 +554,10 @@ export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic
     }
 }
 
-// 新增: 產生 FHIR 測試案例 JSON (直接匯出，不寫入 DB / FHIR Server)
+// 新增: 產生 FHIR 測試案例 JSON (直接匯出，並寫入 DB 同步)
 export async function exportFHIRTestCases() {
     try {
+        console.log("Starting massive export & DB sync (4000 cases)...");
         const bundle = {
             resourceType: "Bundle",
             type: "collection",
@@ -570,24 +571,59 @@ export async function exportFHIRTestCases() {
             });
         };
 
-        // 1. Organization (Hospital & Dept)
-        const hospId = "mock-hosp-" + Date.now();
+        // 1. Setup Supabase Admin
+        const { createClient } = await import("@supabase/supabase-js");
+        const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+        const supabase = createClient(supabaseUrl, serviceRoleKey);
+
+        // 2. Provision the loggable Practitioner (dr-smart-demo)
+        const demoDocId = "dr-smart-demo";
+        const demoDocName = "林智明 醫師 (示範登入)";
+        
+        // Push to FHIR Bundle
+        addResource({
+            resourceType: "Practitioner",
+            id: demoDocId,
+            name: [{ text: demoDocName }]
+        });
+
+        const dummyEmail = `demodoc_${demoDocId}@smart.local`.toLowerCase();
+        console.log("Checking for Sandbox practitioner account...");
+        const { data: usersData } = await supabase.auth.admin.listUsers();
+        let matchedUser = usersData?.users?.find(u => u.email === dummyEmail || u.user_metadata?.fhir_id === `Practitioner/${demoDocId}`);
+        
+        if (!matchedUser) {
+            console.log("Creating Sandbox practitioner account:", demoDocName);
+            await supabase.auth.admin.createUser({
+                email: dummyEmail,
+                password: crypto.randomUUID(),
+                email_confirm: true,
+                user_metadata: {
+                    full_name: demoDocName,
+                    fhir_id: `Practitioner/${demoDocId}`
+                }
+            });
+        }
+
+        // 3. Clear existing KPI Data to make room for big test data
+        await supabase.from("KPI").delete().neq('id', -1);
+        await supabase.from("KPI_Detail").delete().neq('id', -1);
+
+        // 4. Setup Hospitals and Departments
+        const hospId = "hosp-demo-1";
+        const hospName = "台北示範醫學中心";
         addResource({
             resourceType: "Organization",
             id: hospId,
-            name: "測試綜合醫院",
+            name: hospName,
             type: [{ text: "Hospital" }]
         });
 
         const departments = [
-            { id: `mock-dept-1`, name: "一般外科", docs: ["劉醫師", "張醫師"] },
-            { id: `mock-dept-2`, name: "心臟外科", docs: ["吳醫師", "蔡醫師"] },
-            { id: `mock-dept-3`, name: "神經外科", docs: ["王醫師", "李醫師"] },
-            { id: `mock-dept-4`, name: "泌尿外科", docs: ["陳醫師", "林醫師"] },
-            { id: `mock-dept-5`, name: "骨科", docs: ["黃醫師", "莊醫師"] }
+            { id: `dept-surg`, name: "一般外科", docs: [ {id: demoDocId, name: demoDocName}, {id: "doc-surg-1", name: "張國軍 醫師"} ] },
+            { id: `dept-cardio`, name: "心臟外科", docs: [ {id: "doc-cardio-1", name: "王大勇 醫師"} ] },
         ];
-
-        const deptDocMap: Record<string, string[]> = {};
 
         departments.forEach(dept => {
             addResource({
@@ -596,123 +632,192 @@ export async function exportFHIRTestCases() {
                 name: dept.name,
                 partOf: { reference: `urn:uuid:${hospId}` }
             });
-            
-            deptDocMap[dept.id] = [];
-            dept.docs.forEach((docName, idx) => {
-                const docId = `mock-doc-${dept.id}-${idx}`;
-                deptDocMap[dept.id].push(docId);
-                addResource({
-                    resourceType: "Practitioner",
-                    id: docId,
-                    name: [{ text: docName }]
-                });
+            dept.docs.forEach((doc) => {
+                if(doc.id !== demoDocId) {
+                    addResource({
+                        resourceType: "Practitioner",
+                        id: doc.id,
+                        name: [{ text: doc.name }]
+                    });
+                }
             });
         });
 
-        const startDate = new Date("2025-11-01T00:00:00Z");
-        const endDate = new Date("2026-01-30T23:59:59Z");
-        const dateRangeMs = endDate.getTime() - startDate.getTime();
+        // 5. Generate exactly 2000 cases each
+        const kpiDetailsBuffer: any[] = [];
+        const TARGET_PER_INDICATOR = 2000;
+        const indicators = [
+            { id: "mortality", name: "手術後 48 小時內死亡率", def: "麻醉開始後48小時內死亡(含AAD)" },
+            { id: "antibiotic", name: "預防性抗生素在手術劃刀前1小時內給予比率", def: "手術劃刀前1小時內給予預防性抗生素人次 / 手術人次 * 100%" }
+        ];
 
-        // 目標：每科 300 人 (總計約 1500)
-        // 死亡人數控制在 15 人內
-        const CASES_PER_DEPT = 310;
-        let deathCount = 0;
-        const targetDeath = 13; // 13 is less than 15
+        const startDate = new Date("2025-06-01T00:00:00Z").getTime();
+        const endDate = new Date("2026-03-01T23:59:59Z").getTime();
+        const dateRangeMs = endDate - startDate;
 
         let globalCounter = 0;
 
-        const createTestPatient = (deptId: string, deptName: string) => {
-            globalCounter++;
-            const patId = `mock-pat-${Date.now()}-${globalCounter}`;
-            const gender = globalCounter % 2 === 0 ? "male" : "female";
-            const age = 50 + (globalCounter % 30);
-            
-            // Random birthdate
-            const birth = new Date(startDate.getTime() - age * 365.25 * 24 * 60 * 60 * 1000);
-            
-            // Random operation date within 2025-11-01 to 2026-01-30
-            const randomOffset = Math.random() * dateRangeMs;
-            const opStart = new Date(startDate.getTime() + randomOffset);
-            
-            // Random duration 1-4 hrs
-            const durationMs = (1 + Math.random() * 3) * 60 * 60 * 1000;
-            const opEnd = new Date(opStart.getTime() + durationMs);
-            
-            let isMortality = false;
-            // Spread deaths across different dates evenly until reaching target
-            if (deathCount < targetDeath && Math.random() < 0.01) {
-                isMortality = true;
-                deathCount++;
-            }
+        indicators.forEach(indicator => {
+            for (let i = 0; i < TARGET_PER_INDICATOR; i++) {
+                globalCounter++;
+                const dept = departments[globalCounter % departments.length];
+                const doc = dept.docs[(globalCounter + i) % dept.docs.length]; // Distribute
 
-            let dischargeCode = isMortality ? "exp" : "home";
-            let deathTime = isMortality ? new Date(opEnd.getTime() + (Math.random() * 40 + 2) * 60 * 60 * 1000) : null;
+                const patId = `pat-sim-${globalCounter}`;
+                const gender = globalCounter % 2 === 0 ? "male" : "female";
+                const age = 30 + (globalCounter % 60);
 
-            addResource({
-                resourceType: "Patient",
-                id: patId,
-                gender: gender,
-                birthDate: birth.toISOString().split('T')[0],
-                deceasedDateTime: isMortality && deathTime ? deathTime.toISOString() : undefined
-            });
+                const opStartMs = startDate + (Math.random() * dateRangeMs);
+                const opStart = new Date(opStartMs);
+                const opEndMs = opStartMs + (1 + Math.random() * 3) * 60 * 60 * 1000;
+                const opEnd = new Date(opEndMs);
+                const admissionDate = new Date(opStartMs - (1 + Math.random() * 3) * 24 * 60 * 60 * 1000);
 
-            const encId = `mock-enc-${Date.now()}-${globalCounter}`;
-            const dischargeDate = deathTime || new Date(opEnd.getTime() + (3 + Math.random() * 7) * 24 * 60 * 60 * 1000);
-            addResource({
-                resourceType: "Encounter",
-                id: encId,
-                status: "finished",
-                class: { code: "IMP" }, // Inpatient
-                subject: { reference: `urn:uuid:${patId}` },
-                serviceProvider: { reference: `urn:uuid:${deptId}`, display: deptName },
-                hospitalization: {
-                    dischargeDisposition: { coding: [{ code: dischargeCode }] }
-                },
-                period: {
-                    start: new Date(opStart.getTime() - (1 + Math.random()) * 24 * 60 * 60 * 1000).toISOString(),
-                    end: dischargeDate.toISOString()
+                // Indicator Logic
+                let isBad = false;
+                let deathTime = null;
+                let isDeceased = false;
+                let dischargeCode = "home";
+                let abnormalReason = null;
+                let numerator = 0;
+                let denominator = 1;
+                let value = 0;
+
+                if (indicator.id === "mortality") {
+                    // Mortality definition: abnormal if death occurs within 48h
+                    if (i < 20) { // Force 20 specific deaths
+                        isBad = true;
+                        numerator = 1; value = 1;
+                        isDeceased = true;
+                        deathTime = new Date(opEndMs + (Math.random() * 40 + 2) * 60 * 60 * 1000);
+                        dischargeCode = "exp";
+                        abnormalReason = "術後48小時內院內死亡";
+                    }
+                } else if (indicator.id === "antibiotic") {
+                    // Antibiotic definition: abnormal if NOT given (numerator 0)
+                    if (i < 80) { // Force 80 failures
+                        isBad = true;
+                        numerator = 0; value = 0; // Failed to give
+                        abnormalReason = "未在劃刀前1小時內給藥";
+                    } else {
+                        numerator = 1; value = 1; // Successfully given
+                    }
                 }
-            });
 
-            // Antibiotics: usually 90% success
-            const isAbSuccess = Math.random() > 0.1;
+                const dischargeDate = deathTime || new Date(opEndMs + (3 + Math.random() * 7) * 24 * 60 * 60 * 1000);
+                const birthStr = new Date(opStartMs - age * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
 
-            const procId = `mock-proc-${Date.now()}-${globalCounter}`;
-            addResource({
-                resourceType: "Procedure",
-                id: procId,
-                status: "completed",
-                subject: { reference: `urn:uuid:${patId}` },
-                encounter: { reference: `urn:uuid:${encId}` },
-                performedPeriod: {
-                    start: opStart.toISOString(),
-                    end: opEnd.toISOString()
-                },
-                code: {
-                    coding: [{
-                        system: "http://hl7.org/fhir/sid/icd-10-pcs",
-                        code: "0DTJ0ZZ",
-                        display: "Resection of Appendix"
-                    }]
-                },
-                performer: [{ actor: { reference: `urn:uuid:${deptDocMap[deptId][globalCounter % 2]}` } }],
-                note: [{
-                    text: `Antibiotics given 1 hour before: ${isAbSuccess ? "Yes" : "No"}`
-                }]
-            });
-        };
+                // Add FHIR Data
+                addResource({
+                    resourceType: "Patient",
+                    id: patId,
+                    gender: gender,
+                    birthDate: birthStr,
+                    deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined
+                });
 
-        // Generate the test cases
-        departments.forEach(dept => {
-            for (let i = 0; i < CASES_PER_DEPT; i++) {
-                createTestPatient(dept.id, dept.name);
+                const encId = `enc-sim-${globalCounter}`;
+                addResource({
+                    resourceType: "Encounter",
+                    id: encId,
+                    status: "finished",
+                    class: { code: "IMP" },
+                    subject: { reference: `urn:uuid:${patId}` },
+                    serviceProvider: { reference: `urn:uuid:${dept.id}`, display: dept.name },
+                    hospitalization: { dischargeDisposition: { coding: [{ code: dischargeCode }] } },
+                    period: {
+                        start: admissionDate.toISOString(),
+                        end: dischargeDate.toISOString()
+                    }
+                });
+
+                const procId = `proc-sim-${globalCounter}`;
+                addResource({
+                    resourceType: "Procedure",
+                    id: procId,
+                    status: "completed",
+                    subject: { reference: `urn:uuid:${patId}` },
+                    encounter: { reference: `urn:uuid:${encId}` },
+                    performedPeriod: { start: opStart.toISOString(), end: opEnd.toISOString() },
+                    code: {
+                        coding: [{
+                            system: "http://hl7.org/fhir/sid/icd-10-pcs",
+                            code: "0DTJ0ZZ",
+                            display: "Resection of Appendix"
+                        }]
+                    },
+                    performer: [{ actor: { reference: `urn:uuid:${doc.id}` } }]
+                });
+
+                // Add to DB Buffer
+                kpiDetailsBuffer.push({
+                    department: dept.name,
+                    doctor: doc.name,
+                    indicator_name: indicator.name,
+                    indicator_def: indicator.def,
+                    numerator: numerator,
+                    denominator: denominator,
+                    value: value,
+                    patient_id: patId,
+                    patient_gender: gender,
+                    patient_birthday: birthStr,
+                    patient_age: age,
+                    status: isBad ? "異常" : "正常",
+                    unit: "%",
+                    report_date: opEnd.toISOString(),
+                    admission_date: admissionDate.toISOString(),
+                    discharge_date: dischargeDate.toISOString(),
+                    op_start: opStart.toISOString(),
+                    op_end: opEnd.toISOString(),
+                    abnormal_reason: abnormalReason,
+                    hospital_name: hospName,
+                    doctor_id: doc.id
+                });
             }
         });
 
+        // 6. DB Insertion
+        console.log(`Prepared ${kpiDetailsBuffer.length} KPI entries. Starting DB Batches...`);
+        const BATCH_SIZE = 1000;
+        for (let i = 0; i < kpiDetailsBuffer.length; i += BATCH_SIZE) {
+            const batch = kpiDetailsBuffer.slice(i, i + BATCH_SIZE);
+            const { error: detailError } = await supabase.from("KPI_Detail").insert(batch);
+            if (detailError) throw new Error("Batch insert error: " + detailError.message);
+        }
+
+        // 7. Summary Calculation for 'KPI' table
+        const summaryMap = new Map<string, any>();
+        for (const d of kpiDetailsBuffer) {
+            const key = `${d.department}|${d.doctor}|${d.indicator_name}`;
+            if (!summaryMap.has(key)) {
+                summaryMap.set(key, {
+                    department: d.department,
+                    doctor: d.doctor,
+                    indicator_name: d.indicator_name,
+                    indicator_def: d.indicator_def,
+                    numerator: 0,
+                    denominator: 0,
+                    unit: d.unit
+                });
+            }
+            const item = summaryMap.get(key);
+            item.numerator += d.numerator;
+            item.denominator += d.denominator;
+        }
+
+        const kpiSummaryList = Array.from(summaryMap.values()).map(item => ({
+            ...item,
+            value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
+        }));
+
+        const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
+        if (kpiError) throw new Error("KPI sum error: " + kpiError.message);
+
+        console.log("Successfully generated and synced 4000 records!");
         return { success: true, data: bundle };
     } catch (err) {
-        console.error("Export FHIR Error:", err);
-        return { success: false, message: "匯出失敗: " + String(err) };
+        console.error("Export FHIR & Sync Error:", err);
+        return { success: false, message: "資料生成失敗: " + String(err) };
     }
 }
 
