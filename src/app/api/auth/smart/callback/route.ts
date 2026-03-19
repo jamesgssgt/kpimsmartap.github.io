@@ -340,6 +340,9 @@ export async function GET(request: NextRequest) {
         // Create the FINAL Redirect Response before setting cookies
         const response = NextResponse.redirect(new URL(authRedirectUrl));
 
+        const isProd = process.env.NODE_ENV === "production";
+        const cookieSameSite = (isProd ? "none" : "lax") as "none" | "lax";
+
         console.log("Setting Auth Cookies...", {
             accessToken: tokenResponse.access_token ? "Yes" : "No",
             patient: tokenResponse.patient,
@@ -349,18 +352,18 @@ export async function GET(request: NextRequest) {
         const oneHour = 3600;
         response.cookies.set("fhir_access_token", tokenResponse.access_token, {
             httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
+            secure: isProd,
             path: "/",
-            sameSite: "lax",
+            sameSite: cookieSameSite,
             maxAge: oneHour,
         });
 
         if (tokenResponse.refresh_token) {
             response.cookies.set("fhir_refresh_token", tokenResponse.refresh_token, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === "production",
+                secure: isProd,
                 path: "/",
-                sameSite: "lax",
+                sameSite: cookieSameSite,
                 maxAge: oneHour * 24, // 1 day
             });
         }
@@ -368,9 +371,9 @@ export async function GET(request: NextRequest) {
         if (tokenResponse.patient) {
             response.cookies.set("fhir_patient", tokenResponse.patient, {
                 httpOnly: true,
-                secure: process.env.NODE_ENV === "production",
+                secure: isProd,
                 path: "/",
-                sameSite: "lax"
+                sameSite: cookieSameSite
             });
         }
 
@@ -380,17 +383,17 @@ export async function GET(request: NextRequest) {
 
         response.cookies.set("fhir_user_identity", JSON.stringify(identity), {
             httpOnly: false, // Allow client to read for display
-            secure: process.env.NODE_ENV === "production",
+            secure: isProd,
             path: "/",
-            sameSite: "lax"
+            sameSite: cookieSameSite
         });
 
         // Set a visible cookie for client-side
         response.cookies.set("smart_authenticated", "1", {
             httpOnly: false, 
-            secure: process.env.NODE_ENV === "production",
+            secure: isProd,
             path: "/",
-            sameSite: "lax"
+            sameSite: cookieSameSite
         });
 
         return response;

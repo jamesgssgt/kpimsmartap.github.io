@@ -80,27 +80,24 @@ export async function GET(request: NextRequest) {
             fullUrl: fullAuthUrl
         });
 
-        // 4. Store state and iss in cookie for callback verification
-        const cookieStore = await cookies();
-
-        // Cookie Options 
-        const cookieOptions = {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === "production",
-            path: "/",
-            sameSite: "lax" as const,
-            maxAge: 1800
-        };
-
-        // Set Cookies via Store (Preferred implementation)
-        cookieStore.set("smart_state", state, cookieOptions);
-        cookieStore.set("smart_iss", iss, cookieOptions);
-        cookieStore.set("smart_code_verifier", code_verifier, cookieOptions);
-
-        // 5. Redirect with Cache Busting
+        // 4. Create Redirect Response
         const bustUrl = `${fullAuthUrl}&_t=${Date.now()}`;
         const response = NextResponse.redirect(bustUrl);
         response.headers.set("Cache-Control", "no-store, max-age=0");
+
+        const isProd = process.env.NODE_ENV === "production";
+        const cookieOptions = {
+            httpOnly: true,
+            secure: isProd,
+            path: "/",
+            sameSite: (isProd ? "none" : "lax") as "none" | "lax",
+            maxAge: 1800
+        };
+
+        // 5. Store state and iss in cookie directly on response object
+        response.cookies.set("smart_state", state, cookieOptions);
+        response.cookies.set("smart_iss", iss, cookieOptions);
+        response.cookies.set("smart_code_verifier", code_verifier, cookieOptions);
 
         return response;
     } catch (error) {
