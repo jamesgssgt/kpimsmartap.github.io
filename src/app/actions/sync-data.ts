@@ -268,11 +268,25 @@ export async function syncFhirData() {
                 }
 
                 // Prepare Detail Record
-                // Hardcode Dept/Doc as per request
-                const deptName = "一般外科";
-                const doctorName = "王大明";
+                let deptName = "一般外科";
+                if (encounter?.serviceProvider?.display) {
+                    deptName = encounter.serviceProvider.display;
+                } else if (encounter?.serviceProvider?.reference) {
+                    deptName = encounter.serviceProvider.reference.split('/').pop() || "一般外科";
+                }
 
-                // Dates
+                let doctorName = "王大明";
+                if (res.performer && res.performer.length > 0 && res.performer[0].actor?.reference) {
+                    doctorName = res.performer[0].actor.reference.split(/[:\/]/).pop() || "王大明";
+                } else if (encounter?.participant && encounter.participant.length > 0 && encounter.participant[0].individual?.reference) {
+                    doctorName = encounter.participant[0].individual.reference.split(/[:\/]/).pop() || "王大明";
+                }
+                
+                // If it's the demo doc ID, make it pretty
+                if (doctorName === "dr-smart-demo") {
+                    doctorName = "林智明";
+                }
+
                 const reportDate = res.performedPeriod?.end || res.effectiveDateTime || new Date().toISOString();
 
                 allDetails.push({
