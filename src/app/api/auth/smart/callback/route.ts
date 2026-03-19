@@ -283,7 +283,10 @@ export async function GET(request: NextRequest) {
                     auth: { autoRefreshToken: false, persistSession: false }
                 });
 
-                const dummyEmail = identity.email || `${identity.sub.replace('/', '_')}@smart.local`.toLowerCase();
+                // 為了防止部分 HIS 系統完全不給 ID (變成 unknown)，我們把「名字」也加進虛擬信箱中，確保不會有多個醫師共用一個 unknown@smart.local
+                const safeSub = identity.sub !== "unknown" ? identity.sub.replace('/', '_') : "unknown";
+                const safeName = identity.name ? identity.name.replace(/\s+/g, '') : crypto.randomUUID().substring(0, 8);
+                const dummyEmail = identity.email || `${safeName}_${safeSub}@smart.local`.toLowerCase();
 
                 const { data: usersData, error: listError } = await adminAuthClient.auth.admin.listUsers();
                 let matchedUser = usersData?.users?.find(u => 
