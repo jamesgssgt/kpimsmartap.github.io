@@ -38,6 +38,7 @@
   ],
   "exclude": [
     "node_modules",
-    "smart-on-fhir-quality-monitor"
+    "smart-on-fhir-quality-monitor",
+    "scripts"
   ]
 }
