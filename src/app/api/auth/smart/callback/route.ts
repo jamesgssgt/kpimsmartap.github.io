@@ -142,8 +142,8 @@ export async function GET(request: NextRequest) {
         // Proceed to identity extraction and cookie setting.
 
         // Plan B logic for identity fetching remains above...
-        // Extract Identity (id_token OR Fetch Patient/Practitioner)
-        let primarySub = tokenResponse.patient || tokenResponse.practitioner || tokenResponse.user;
+        // Extract Identity (id_token OR Fetch Practitioner/Patient)
+        let primarySub = tokenResponse.practitioner || tokenResponse.user || tokenResponse.patient;
         let identity: any = {
             sub: primarySub || "unknown",
             iss: iss,
