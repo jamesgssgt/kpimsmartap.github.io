@@ -6,7 +6,7 @@ import crypto from "node:crypto";
 export async function GET(request: NextRequest) {
     try {
         const searchParams = request.nextUrl.searchParams;
-        let iss = searchParams.get("iss") || SMART_CONFIG.iss;
+        let iss = (searchParams.get("iss") || SMART_CONFIG.iss)?.trim() || "";
         let launch = searchParams.get("launch");
 
         // Removed Strict Launch Requirement to support Provider Standalone Launch
@@ -34,7 +34,7 @@ export async function GET(request: NextRequest) {
         const code_challenge = crypto.createHash('sha256').update(code_verifier).digest('base64url');
 
         // 3. Construct URL
-        const redirectUri = `${request.nextUrl.origin}/api/auth/smart/callback`;
+        const redirectUri = process.env.NEXT_PUBLIC_SMART_REDIRECT_URI || `${request.nextUrl.origin}/api/auth/smart/callback`;
         const scope = SMART_CONFIG.scope;
 
         const params = new URLSearchParams({

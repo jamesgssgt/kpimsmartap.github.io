@@ -39,9 +39,9 @@ export async function GET(request: NextRequest) {
 
     // Exchange Code
     const storedIss = cookieStore.get("smart_iss")?.value;
-    const iss = storedIss || SMART_CONFIG.iss;
+    const iss = (storedIss || SMART_CONFIG.iss)?.trim() || "";
     const metadata = await getSmartMetadata(iss);
-    const tokenUrl = metadata?.token_endpoint || "https://launch.smarthealthit.org/v/r4/auth/token";
+    const tokenUrl = (metadata?.token_endpoint || "https://launch.smarthealthit.org/v/r4/auth/token")?.trim();
 
     // Confidential Client Authentication (Symmetric)
     // We send Authorization header Basic ... or client_secret in body
