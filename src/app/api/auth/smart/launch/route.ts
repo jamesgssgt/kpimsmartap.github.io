@@ -75,7 +75,7 @@ export async function GET(request: NextRequest) {
             httpOnly: true,
             secure: isProd,
             path: "/",
-            sameSite: (isProd ? "none" : "lax") as "none" | "lax",
+            sameSite: "lax" as const,
             maxAge: 1800
         };
 
