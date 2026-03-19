@@ -242,20 +242,25 @@ export async function syncFhirData() {
                         if (['aadvice', 'exp'].includes(dispCode)) isNumerator = true;
                     }
                 } else if (isAntibiotic) {
-                    // Antibiotic Logic... requires fetching Meds...
-                    // This engine doesn't fetch Meds yet!
-                    // If we want to support this, we need to fetch Meds for the Encounter.
-                    // Let's skip complex logic for now and assume the Generic Engine handles "Simple" filters.
-                    // Or... blindly apply generic logic.
-                    // If dls has Numerator steps, check them.
-
-                    nums.forEach(step => {
-                        const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
-                        if (evaluateCondition(res, condition)) {
-                            isNumerator = true;
-                            abnormalReason = step.kpi_dl_notes || "符合分子條件";
-                        }
-                    });
+                    // Check if res.note exists and has our injected semantic string
+                    const hasGiven = res.note?.some((n: any) => n.text === "Antibiotic given: true");
+                    const hasNotGiven = res.note?.some((n: any) => n.text === "Antibiotic given: false");
+                    
+                    if (hasGiven) {
+                        isNumerator = true;
+                    } else if (hasNotGiven) {
+                        isNumerator = false;
+                        abnormalReason = "未在劃刀前1小時內給藥";
+                    } else {
+                        // fallback to default DL generic logic
+                        nums.forEach(step => {
+                            const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
+                            if (evaluateCondition(res, condition)) {
+                                isNumerator = true;
+                                abnormalReason = step.kpi_dl_notes || "符合分子條件";
+                            }
+                        });
+                    }
                 } else {
                     // Generic Numerator Check
                     nums.forEach(step => {
@@ -286,8 +291,16 @@ export async function syncFhirData() {
                 if (doctorName === "dr-smart-demo") {
                     doctorName = "林智明";
                 }
-
+                // Dates
                 const reportDate = res.performedPeriod?.end || res.effectiveDateTime || new Date().toISOString();
+
+                const isPositiveKPI = kpi.name.includes("給予比率") || kpi.name.includes("達成率");
+                let status = "正常";
+                if (isPositiveKPI) {
+                    status = isNumerator ? "正常" : "異常";
+                } else {
+                    status = isNumerator ? "異常" : "正常";
+                }
 
                 allDetails.push({
                     department: deptName,
@@ -298,7 +311,7 @@ export async function syncFhirData() {
                     patient_gender: patient?.gender,
                     patient_birthday: patient?.birthDate,
                     patient_age: patient?.birthDate ? new Date().getFullYear() - new Date(patient.birthDate).getFullYear() : 0,
-                    status: isNumerator ? "異常" : "正常",
+                    status: status,
                     value: isNumerator ? 1 : 0,
                     numerator: isNumerator ? 1 : 0,
                     denominator: 1,

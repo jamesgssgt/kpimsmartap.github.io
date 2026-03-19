@@ -732,6 +732,15 @@ export async function exportFHIRTestCases() {
                 });
 
                 const procId = `proc-sim-${globalCounter}`;
+                // Inject semantic note for external FHIR parsers (like sync-data.ts)
+                const isAntibioticSuccess = (indicator.id === "antibiotic" && value === 1);
+                const isAntibioticFail = (indicator.id === "antibiotic" && value === 0);
+                
+                const procedureNotes = [];
+                if (indicator.id === "antibiotic") {
+                    procedureNotes.push({ text: `Antibiotic given: ${isAntibioticSuccess ? 'true' : 'false'}` });
+                }
+
                 addResource({
                     resourceType: "Procedure",
                     id: procId,
@@ -746,7 +755,8 @@ export async function exportFHIRTestCases() {
                             display: "Resection of Appendix"
                         }]
                     },
-                    performer: [{ actor: { reference: `urn:uuid:${doc.id}` } }]
+                    performer: [{ actor: { reference: `urn:uuid:${doc.id}` } }],
+                    ...(procedureNotes.length > 0 && { note: procedureNotes })
                 });
 
                 // Add to DB Buffer
