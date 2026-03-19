@@ -157,8 +157,18 @@ export async function syncFhirData() {
             if (denoms.length === 0) continue;
 
             // Determine Main Resource Type from First Denominator Step
-            const baseResource = denoms[0].kpi_id_fhir_resource;
-            if (!baseResource) continue;
+            let baseResource = denoms[0].kpi_id_fhir_resource;
+            
+            // Fallback heuristics if the resource type wasn't explicitly mapped in the DB 
+            if (!baseResource) {
+                if (kpi.name.includes("手術") || kpi.name.includes("抗生素") || kpi.name.includes("給予比率")) {
+                    baseResource = "Procedure";
+                } else if (kpi.name.includes("急診") || kpi.name.includes("住院")) {
+                    baseResource = "Encounter";
+                } else {
+                    continue; // Unresolvable
+                }
+            }
 
             // Fetch Base Resources
             // Support Pagination to fetch all generated cases
