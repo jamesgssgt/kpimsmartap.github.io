@@ -166,7 +166,14 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                 
                 {/* Pagination Controls */}
                 {items.length > pageSize && (
-                    <div className="flex items-center justify-end space-x-2 mt-4 text-sm">
+                    <div className="flex items-center justify-center space-x-2 mt-4 text-sm">
+                        <button
+                            className="px-3 py-1 border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => setCurrentPage(1)}
+                            disabled={currentPage === 1}
+                        >
+                            &lt;&lt; 回第一頁
+                        </button>
                         <button
                             className="px-3 py-1 border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
@@ -174,7 +181,7 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                         >
                             上一頁
                         </button>
-                        <span>
+                        <span className="px-4">
                             第 {currentPage} / {Math.ceil(items.length / pageSize)} 頁
                         </span>
                         <button
@@ -183,6 +190,13 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                             disabled={currentPage * pageSize >= items.length}
                         >
                             下一頁
+                        </button>
+                        <button
+                            className="px-3 py-1 border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => setCurrentPage(Math.ceil(items.length / pageSize))}
+                            disabled={currentPage * pageSize >= items.length}
+                        >
+                            &gt;&gt; 最後一頁
                         </button>
                     </div>
                 )}
