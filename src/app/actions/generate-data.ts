@@ -115,6 +115,13 @@ async function createInfrastructure() {
                     name: [{ text: full_name }]
                 });
 
+                await fhirSave("PractitionerRole", {
+                    resourceType: "PractitionerRole",
+                    id: `pr-${doc_id}`,
+                    practitioner: { reference: `Practitioner/${doc_id}` },
+                    organization: { reference: `Organization/${hosp_org_id}` }
+                });
+
                 dept_docs.push(doc_id);
                 doc_names[doc_id] = doc_name_short;
             }
@@ -270,12 +277,16 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             birthDate.setDate(randomInt(1, 28));
             const birthDateStr = birthDate.toISOString().split('T')[0];
 
+            const hospNameRaw = chosenDeptObj.org_name.match(/【(.*?)】/)?.[1] || "Unknown Hospital";
+            const hosp_org_id = hCode ? `org-${hCode.toLowerCase()}` : "org-tp_gen";
+
             await fhirSave("Patient", {
                 resourceType: "Patient",
                 id: patId,
                 gender: gender,
                 birthDate: birthDateStr,
-                deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined
+                deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined,
+                managingOrganization: { reference: `Organization/${hosp_org_id}` }
             });
 
             const encId = `enc-${mode}-${genCounter}`;
@@ -332,7 +343,6 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
 
             // Report Date Logic: Surgery Completion Date
             const reportDate = opEnd.toISOString();
-            const hospNameRaw = chosenDeptObj.org_name.match(/【(.*?)】/)?.[1] || "Unknown Hospital";
 
             const results = [];
 
@@ -599,6 +609,13 @@ export async function exportFHIRTestCases() {
             name: [{ text: demoDocName }]
         });
 
+        addResource({
+            resourceType: "PractitionerRole",
+            id: `pr-${demoDocId}`,
+            practitioner: { reference: `urn:uuid:${demoDocId}` },
+            organization: { reference: `urn:uuid:org-tp_gen` }
+        });
+
         const dummyEmail = `demodoc_${demoDocId}@smart.local`.toLowerCase();
         console.log("Checking for Sandbox practitioner account...");
         const { data: usersData } = await supabase.auth.admin.listUsers();
@@ -652,6 +669,12 @@ export async function exportFHIRTestCases() {
                         resourceType: "Practitioner",
                         id: doc.id,
                         name: [{ text: doc.name }]
+                    });
+                    addResource({
+                        resourceType: "PractitionerRole",
+                        id: `pr-${doc.id}`,
+                        practitioner: { reference: `urn:uuid:${doc.id}` },
+                        organization: { reference: `urn:uuid:org-tp_gen` }
                     });
                 }
             });
@@ -731,7 +754,8 @@ export async function exportFHIRTestCases() {
                     id: patId,
                     gender: gender,
                     birthDate: birthStr,
-                    deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined
+                    deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined,
+                    managingOrganization: { reference: `urn:uuid:org-tp_gen` }
                 });
 
                 const encId = `enc-sim-${globalCounter}`;
