@@ -177,7 +177,7 @@ export default async function DashboardPage(props: {
         const globalMinDateTs = allDates.length > 0 ? Math.min(...allDates) : 0;
 
         const globalMaxDateStr = globalMaxDateTs > 0 ? new Date(globalMaxDateTs).toISOString().split('T')[0] : "";
-        const globalMinDateStr = globalMinDateTs > 0 ? new Date(globalMinDateTs).toISOString().split('T')[0] : "";
+        const globalMinDateStr = globalMaxDateTs > 0 ? "2026-01-01" : ""; // Requested default 2026-01-01 start
 
         // 4. Apply Date Range Filter to Data
         let filteredDetails = [...kpiDetails];

@@ -73,6 +73,14 @@ function DrillDownTooltip({ children, content }: { children: React.ReactNode; co
 
 export function KPITable({ items, title, viewType = "department", numeratorLabel = "分子", denominatorLabel = "分母" }: KPITableProps) {
     const searchParams = useSearchParams();
+    const [currentPage, setCurrentPage] = useState(1);
+    const pageSize = 5;
+
+    // Reset pagination when items change (e.g. searching, date change)
+    useEffect(() => {
+        setCurrentPage(1);
+    }, [items]);
+
     // Helper to preserve other params (like dates) when adding dept query
     const createQueryString = (name: string, value: string) => {
         const params = new URLSearchParams(searchParams.toString());
@@ -115,7 +123,7 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                         </TableRow>
                     </TableHeader>
                     <TableBody>
-                        {items.map((item, index) => (
+                        {items.slice((currentPage - 1) * pageSize, currentPage * pageSize).map((item, index) => (
                             <TableRow key={index} className="even:bg-slate-50 even:dark:bg-slate-900/50">
                                 {viewType !== "none" && (
                                     <TableCell className="font-medium">
@@ -155,6 +163,29 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                         )}
                     </TableBody>
                 </Table>
+                
+                {/* Pagination Controls */}
+                {items.length > pageSize && (
+                    <div className="flex items-center justify-end space-x-2 mt-4 text-sm">
+                        <button
+                            className="px-3 py-1 border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                            disabled={currentPage === 1}
+                        >
+                            上一頁
+                        </button>
+                        <span>
+                            第 {currentPage} / {Math.ceil(items.length / pageSize)} 頁
+                        </span>
+                        <button
+                            className="px-3 py-1 border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
+                            onClick={() => setCurrentPage(p => Math.min(Math.ceil(items.length / pageSize), p + 1))}
+                            disabled={currentPage * pageSize >= items.length}
+                        >
+                            下一頁
+                        </button>
+                    </div>
+                )}
             </CardContent>
         </Card>
     );
