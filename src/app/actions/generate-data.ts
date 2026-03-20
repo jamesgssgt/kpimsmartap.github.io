@@ -106,7 +106,7 @@ async function createInfrastructure() {
             for (let i = 0; i < d_info.docs.length; i++) {
                 const surname = d_info.docs[i];
                 const doc_id = `doc-${hosp.code.toLowerCase()}-${d_code.toLowerCase()}-${i}`;
-                const doc_name_short = `${surname}醫師`;
+                const doc_name_short = surname;
                 const full_name = `${doc_name_short} (${hosp.name.slice(0, 2)})`;
 
                 await fhirSave("Practitioner", {
@@ -590,7 +590,7 @@ export async function exportFHIRTestCases() {
 
         // 2. Provision the loggable Practitioner (dr-smart-demo)
         const demoDocId = "dr-smart-demo";
-        const demoDocName = "林智明 醫師 (示範登入)";
+        const demoDocName = "林智明 (示範登入)";
         
         // Push to FHIR Bundle
         addResource({
@@ -634,7 +634,7 @@ export async function exportFHIRTestCases() {
         const departments = Object.entries(DEPT_TEMPLATE).map(([key, info]) => ({
             id: `dept-${key.toLowerCase()}`,
             name: info.name,
-            docs: info.docs.map((d, i) => ({ id: `doc-${key.toLowerCase()}-${i}`, name: `${d} 醫師` }))
+            docs: info.docs.map((d, i) => ({ id: `doc-${key.toLowerCase()}-${i}`, name: d }))
         }));
         // Ensure demo doc is in the first dept
         departments[0].docs.unshift({ id: demoDocId, name: demoDocName });
