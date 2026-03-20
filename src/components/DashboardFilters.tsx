@@ -125,26 +125,22 @@ export function DashboardFilters({
         }
 
         // For Dates, if URL date is "A" and local is "B" (typing), and "B" hasn't pushed yet...
-        // If we overwrite B with A, we lose typing.
-        // But if A changed because user hit Back, we MUST overwrite B.
-        // This is tricky. Let's assume URL update is dominant. 
-        // With 800ms debounce, conflict is rare unless rapid nav.
         if (urlStart && urlStart !== startDate) setStartDate(urlStart);
         if (urlEnd && urlEnd !== endDate) setEndDate(urlEnd);
+    }, [searchParams]);
 
-        // Initialize Defaults if missing (First Load)
-        if (!urlStart && defaultStartDate && !startDate) {
+    // Force sync defaults when data bounds change (e.g. after data generation and router.refresh)
+    React.useEffect(() => {
+        if (!searchParams.get("startDate") && defaultStartDate) {
             setStartDate(defaultStartDate);
-            // We don't auto-push default to URL here to keep URL clean, 
-            // but `page.tsx` needs to know. 
-            // Actually, `page.tsx` uses defaults if params empty.
-            // We just need UI to match.
         }
-        if (!urlEnd && defaultEndDate && !endDate) {
+    }, [defaultStartDate, searchParams]);
+
+    React.useEffect(() => {
+        if (!searchParams.get("endDate") && defaultEndDate) {
             setEndDate(defaultEndDate);
         }
-
-    }, [searchParams]);
+    }, [defaultEndDate, searchParams]);
 
     // Filtered options
     const deptOptions = departments.map(d => ({ label: d, value: d }));

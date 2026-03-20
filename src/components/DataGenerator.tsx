@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { generateData, clearGeneratedData, exportFHIRTestCases } from "@/app/actions/generate-data";
+import { clearGeneratedData, exportFHIRTestCases, generateDataV2 } from "@/app/actions/generate-data";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -18,22 +18,22 @@ import { useRouter } from "next/navigation";
 
 export function DataGenerator() {
     const [open, setOpen] = useState(false);
-    const [loading, setLoading] = useState(false);
+    const [loadingAction, setLoadingAction] = useState<string | null>(null);
     const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
     const router = useRouter();
 
     const handleGenerate = async (mode: 'mortality' | 'antibiotic') => {
-        setLoading(true);
-        const res = await generateData(mode);
+        setLoadingAction(mode);
+        const res = await generateDataV2(mode);
         setResult(res);
-        setLoading(false);
+        setLoadingAction(null);
     };
 
     const handleClear = async () => {
         if (!confirm("確定要清除所有已生成的 KPI 資料嗎？這不會刪除指標定義，但會清空所有圖表數據。")) return;
-        setLoading(true);
+        setLoadingAction('clear');
         const res = await clearGeneratedData('all');
-        setLoading(false);
+        setLoadingAction(null);
 
         // Show alert for Clear action since it's outside the dialog
         alert(res.message);
@@ -41,7 +41,7 @@ export function DataGenerator() {
     };
 
     const handleExportFHIR = async () => {
-        setLoading(true);
+        setLoadingAction('export');
         try {
             const res = await exportFHIRTestCases();
             if (res.success && res.data) {
@@ -62,7 +62,7 @@ export function DataGenerator() {
             console.error("Export FHIR Error:", error);
             alert("匯出發生錯誤");
         }
-        setLoading(false);
+        setLoadingAction(null);
     };
 
     const handleClose = () => {
@@ -76,7 +76,7 @@ export function DataGenerator() {
         <div className="flex flex-wrap items-center gap-4">
             <Dialog open={open} onOpenChange={setOpen}>
                 <DialogTrigger asChild>
-                    <Button variant="outline" type="button" disabled={loading}>開啟資料生成器</Button>
+                    <Button variant="outline" type="button" disabled={loadingAction !== null}>開啟資料生成器</Button>
                 </DialogTrigger>
                 <DialogContent className="sm:max-w-[425px]" onInteractOutside={(e) => e.preventDefault()}>
                     {!result ? (
@@ -84,31 +84,33 @@ export function DataGenerator() {
                             <DialogHeader>
                                 <DialogTitle>生成範例資料</DialogTitle>
                                 <DialogDescription>
-                                    將生成 **半年份 (180天)** 的範例資料並寫入系統。此過程可能需要一點時間。
+                                    {loadingAction === 'mortality' ? "正在生成「手術後 48 小時內死亡率」半年份 (180天) 的範例資料並寫入系統，這可能需要一點時間..." :
+                                     loadingAction === 'antibiotic' ? "正在生成「預防性抗生素未在劃刀前 1 小時給予」半年份 (180天) 的範例資料並寫入系統，這可能需要一點時間..." :
+                                     "將生成 **半年份 (180天)** 的範例資料並寫入系統。此過程可能需要一點時間。"}
                                 </DialogDescription>
                             </DialogHeader>
                             <div className="py-4 flex justify-center">
-                                {loading && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
+                                {loadingAction && loadingAction !== 'export' && loadingAction !== 'clear' && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
                             </div>
                             <DialogFooter className="flex-col sm:flex-row gap-2">
-                                <Button variant="outline" onClick={() => setOpen(false)} disabled={loading} type="button">
+                                <Button variant="outline" onClick={() => setOpen(false)} disabled={loadingAction !== null} type="button">
                                     取消
                                 </Button>
                                 <Button
                                     className="bg-rose-600 hover:bg-rose-700"
                                     onClick={() => handleGenerate('mortality')}
-                                    disabled={loading}
+                                    disabled={loadingAction !== null}
                                     type="button"
                                 >
-                                    {loading ? "處理中..." : "生成：術後死亡率"}
+                                    {loadingAction === 'mortality' ? "生成「死亡率」中..." : "生成：術後死亡率"}
                                 </Button>
                                 <Button
                                     className="bg-emerald-600 hover:bg-emerald-700"
                                     onClick={() => handleGenerate('antibiotic')}
-                                    disabled={loading}
+                                    disabled={loadingAction !== null}
                                     type="button"
                                 >
-                                    {loading ? "處理中..." : "生成：抗生素給予率"}
+                                    {loadingAction === 'antibiotic' ? "生成「抗生素」中..." : "生成：抗生素給予率"}
                                 </Button>
                             </DialogFooter>
                         </>
@@ -131,21 +133,21 @@ export function DataGenerator() {
             <Button
                 variant="outline"
                 onClick={handleExportFHIR}
-                disabled={loading}
+                disabled={loadingAction !== null}
                 type="button"
                 className="gap-2"
             >
-                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
+                {loadingAction === 'export' ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
                 匯出測試案例(FHIR JSON)
             </Button>
 
             <Button
                 variant="destructive"
                 onClick={handleClear}
-                disabled={loading}
+                disabled={loadingAction !== null}
                 type="button"
             >
-                {loading ? "處理中..." : "清除所有資料"}
+                {loadingAction === 'clear' ? "處理中..." : "清除所有資料"}
             </Button>
         </div>
     );

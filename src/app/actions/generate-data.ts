@@ -13,15 +13,21 @@ interface Hospital {
 }
 
 const HOSPITALS: Hospital[] = [
-    { code: "TP_GEN", name: "台北綜合醫院", risk: 1.0 },
-    { code: "NAT_MED", name: "國立醫學中心", risk: 1.2 },
-    { code: "CITY_UN", name: "市立聯合醫院", risk: 0.8 },
+    { code: "TP_GEN", name: "台北綜合醫院", risk: 1.0 }
 ];
 
 const DEPT_TEMPLATE = {
-    SURG: { name: "外科", docs: ["劉", "張"] },
-    CARDIO: { name: "心臟科", docs: ["吳", "蔡"] },
-    ORTHO: { name: "骨科", docs: ["王", "李"] },
+    SURG: { name: "一般外科", docs: ["林建國", "張志豪", "王大明", "徐世鈞", "楊志強"] },
+    CARDIO: { name: "心臟外科", docs: ["陳明輝", "王家銘", "劉文正", "邱建宏"] },
+    ORTHO: { name: "骨科", docs: ["吳文彬", "李宗翰", "郭台倫", "林俊宏", "陳信宏"] },
+    NEURO: { name: "神經外科", docs: ["黃志祥", "劉俊宏", "吳宗剛", "許家豪"] },
+    GASTRO: { name: "消化外科", docs: ["蔡仁傑", "楊智捷", "張瑞平", "周文彬", "王志偉"] },
+    CHEST: { name: "胸腔外科", docs: ["趙子龍", "周建平", "林偉哲", "黃柏鈞"] },
+    URO: { name: "泌尿外科", docs: ["鄭建銘", "陳國華", "李宇明", "張家銘", "蔡秉宏"] },
+    PED: { name: "小兒外科", docs: ["李宇軒", "林俊希", "王文華", "陳冠宇"] },
+    OBS: { name: "婦產科", docs: ["陳玉婷", "黃依珊", "林雅雯", "李佳玲", "張美惠"] },
+    ENT: { name: "耳鼻喉科", docs: ["吳浩宇", "林柏宏", "陳柏翰", "黃建宇"] },
+    PLASTIC: { name: "整形外科", docs: ["張家豪", "陳品睿", "吳佳融", "林子揚", "楊承翰"] }
 };
 
 // Utils
@@ -75,7 +81,7 @@ async function createInfrastructure() {
         infra[h_code] = { risk: hosp.risk, depts: [] };
 
         // Hosp Org
-        const hosp_org_id = getLongId();
+        const hosp_org_id = `org-${hosp.code.toLowerCase()}`;
         await fhirSave("Organization", {
             resourceType: "Organization",
             id: hosp_org_id,
@@ -84,7 +90,7 @@ async function createInfrastructure() {
         });
 
         for (const [d_code, d_info] of Object.entries(DEPT_TEMPLATE)) {
-            const dept_org_id = getLongId();
+            const dept_org_id = `org-${hosp.code.toLowerCase()}-${d_code.toLowerCase()}`;
             const full_dept_name = `【${hosp.name}】${d_info.name}`;
 
             await fhirSave("Organization", {
@@ -97,8 +103,9 @@ async function createInfrastructure() {
             const dept_docs: string[] = [];
             const doc_names: Record<string, string> = {};
 
-            for (const surname of d_info.docs) {
-                const doc_id = getLongId();
+            for (let i = 0; i < d_info.docs.length; i++) {
+                const surname = d_info.docs[i];
+                const doc_id = `doc-${hosp.code.toLowerCase()}-${d_code.toLowerCase()}-${i}`;
                 const doc_name_short = `${surname}醫師`;
                 const full_name = `${doc_name_short} (${hosp.name.slice(0, 2)})`;
 
@@ -124,13 +131,18 @@ async function createInfrastructure() {
     return infra;
 }
 
-const DAYS_BACK = 180;
+const START_DATE = new Date("2025-06-01T00:00:00+08:00");
+const END_DATE = new Date("2026-02-28T23:59:59+08:00");
+const DAYS_BACK = Math.ceil((END_DATE.getTime() - START_DATE.getTime()) / (1000 * 60 * 60 * 24));
 
 // ... (Hospital/Dept/Infra logic remains same)
 
-export async function generateData(mode: 'mortality' | 'antibiotic') {
+// Force renamed to bypass Next.js Server Action cache hash clinging to old Date.now() logic
+export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
     try {
+        const { createClient } = await import("@/utils/supabase/server");
         const supabase = await createClient();
+
         const indicatorName = mode === 'mortality' ? '手術後 48 小時內死亡率' : '預防性抗生素在手術劃刀前1小時內給予比率';
 
         // Clear existing data FOR THIS INDICATOR only?
@@ -169,10 +181,13 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
             }
         }
 
+        let genCounter = 0;
+
         // Helper to generate a single case
         const createCase = async (dayIndex: number, specificDept?: any, forceAbnormal?: boolean) => {
+            genCounter++;
             // ... (Date/Dept logic same)
-            const now = new Date();
+            const now = END_DATE;
             const opStart = new Date(now.getTime() - dayIndex * 24 * 60 * 60 * 1000);
             opStart.setHours(randomInt(8, 16));
             opStart.setMinutes(randomInt(0, 59));
@@ -190,57 +205,49 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
                 hCode = randomSel.hospCode;
             }
 
-            // Risk logic
-            let isBad = false;
-            if (forceAbnormal) {
-                isBad = true;
-            } else {
-                isBad = Math.random() < 0.02;
-            }
-
             // 1. Mortality Logic
             let isMortalityNum = false;
             let isDeceased = false;
             let mortalityReason = null;
             let deathTime = null;
             let dischargeDispositionCode = "home";
+            let isBad = false;
 
-            // Only apply abnormal logic if mode matches or it's random chance?
-            // User wants "Generating demo data... split into two".
-            // If I click "Mortality", I expect Mortality data to be interesting.
-            // I don't necessarily care about Antibiotics data in that click, or I might want it "normal".
-
-            if (mode === 'mortality' && isBad) {
+            if (mode === 'mortality') {
                 const isAAD = Math.random() < 0.3;
-                // ... (Mortality logic)
-                const hoursPostAnes = randomInt(2, 46);
-                const eventTime = new Date(anesthesiaStart.getTime() + hoursPostAnes * 60 * 60 * 1000);
-                dischargeDate.setTime(eventTime.getTime());
-                isMortalityNum = true;
-                if (isAAD) {
-                    mortalityReason = "病危自動出院(AAD) - 麻醉後48小時內";
-                    dischargeDispositionCode = "aadvice";
-                } else {
-                    isDeceased = true;
-                    deathTime = eventTime;
-                    mortalityReason = "術後48小時內院內死亡";
-                    dischargeDispositionCode = "exp";
+                const baseProb = ["CARDIO", "NEURO"].includes(chosenDeptObj.dept_code) ? 0.05 : 0.01;
+                isBad = forceAbnormal || Math.random() < baseProb;
+
+                if (isBad) {
+                    const hoursPostAnes = randomInt(2, 46);
+                    const eventTime = new Date(anesthesiaStart.getTime() + hoursPostAnes * 60 * 60 * 1000);
+                    dischargeDate.setTime(eventTime.getTime());
+                    isMortalityNum = true;
+                    if (isAAD) {
+                        mortalityReason = "病危自動出院(AAD) - 麻醉後48小時內";
+                        dischargeDispositionCode = "aadvice";
+                    } else {
+                        isDeceased = true;
+                        deathTime = eventTime;
+                        mortalityReason = "術後48小時內院內死亡";
+                        dischargeDispositionCode = "exp";
+                    }
                 }
             }
 
             // 2. Antibiotic Logic
-            // If mode is antibiotic, we might force bad cases if forceAbnormal is true.
             let isAntibioticSuccess = true;
 
             if (mode === 'antibiotic') {
+                const baseProb = ["ORTHO", "ENT"].includes(chosenDeptObj.dept_code) ? 0.15 : 0.03;
                 if (forceAbnormal) {
                     isAntibioticSuccess = false; // Force fail
                 } else {
-                    isAntibioticSuccess = Math.random() > 0.08; // Random fail (92% success rate)
+                    isAntibioticSuccess = Math.random() > baseProb; 
                 }
             } else {
                 // If generating mortality, just random normal-ish antibiotic
-                isAntibioticSuccess = Math.random() > 0.08;
+                isAntibioticSuccess = Math.random() > 0.05;
             }
 
             const antibioticNum = isAntibioticSuccess ? 1 : 0;
@@ -254,7 +261,7 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
             const docName = chosenDeptObj.doc_names[docId];
 
             // FHIR Resources
-            const patId = getLongId();
+            const patId = `pat-${mode}-${genCounter}`;
             const gender = randomChoice(["male", "female"]);
             const age = randomInt(20, 90);
             const birthDate = new Date(now);
@@ -271,7 +278,7 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
                 deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined
             });
 
-            const encId = getLongId();
+            const encId = `enc-${mode}-${genCounter}`;
             await fhirSave("Encounter", {
                 resourceType: "Encounter",
                 id: encId,
@@ -288,7 +295,7 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
                 }
             });
 
-            const procId = getLongId();
+            const procId = `proc-${mode}-${genCounter}`;
             const icdCodes = [
                 { code: "0B110Z4", display: "Dilatation of Trachea" },
                 { code: "021009W", display: "Bypass Coronary Artery, One Site" },
@@ -439,7 +446,7 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
         const abnormalPromises = [];
         const daysByMonth: Record<string, number[]> = {};
         for (let d = 0; d < DAYS_BACK; d++) {
-            const now = new Date();
+            const now = END_DATE;
             const date = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
             const mKey = date.toISOString().substring(0, 7);
             if (!daysByMonth[mKey]) daysByMonth[mKey] = [];
@@ -517,8 +524,11 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
             return { success: false, message: "生成過程中發生資料庫錯誤" };
         }
 
-        return { success: true, message: `[${indicatorName}] 生成完成 (共 ${generatedItems.length} 筆)` };
-
+        // Trigger Next.js Dev Server Recompile to bust the old logic cache
+        return { 
+            success: true, 
+            message: `成功生成「${indicatorName}」共 ${generatedItems.length} 筆範例資料！\n時間範圍：2025/06/01 ~ 2026/02/28` 
+        };
     } catch (err) {
         console.error(err);
         return { success: false, message: "生成失敗: " + String(err) };
@@ -527,6 +537,7 @@ export async function generateData(mode: 'mortality' | 'antibiotic') {
 
 export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic' = 'all') {
     try {
+        const { createClient } = await import("@/utils/supabase/server");
         const supabase = await createClient();
 
         if (mode === 'all') {
@@ -571,10 +582,10 @@ export async function exportFHIRTestCases() {
             });
         };
 
-        // 1. Setup Supabase Admin
+        // 1. Setup Supabase Admin (Fallback to Anon if missing)
         const { createClient } = await import("@supabase/supabase-js");
         const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+        const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
         const supabase = createClient(supabaseUrl, serviceRoleKey);
 
         // 2. Provision the loggable Practitioner (dr-smart-demo)
@@ -611,8 +622,8 @@ export async function exportFHIRTestCases() {
         await supabase.from("KPI_Detail").delete().neq('id', -1);
 
         // 4. Setup Hospitals and Departments
-        const hospId = "hosp-demo-1";
-        const hospName = "台北示範醫學中心";
+        const hospId = "org-tp_gen";
+        const hospName = "台北綜合醫院";
         addResource({
             resourceType: "Organization",
             id: hospId,
@@ -620,10 +631,13 @@ export async function exportFHIRTestCases() {
             type: [{ text: "Hospital" }]
         });
 
-        const departments = [
-            { id: `dept-surg`, name: "一般外科", docs: [ {id: demoDocId, name: demoDocName}, {id: "doc-surg-1", name: "張國軍 醫師"} ] },
-            { id: `dept-cardio`, name: "心臟外科", docs: [ {id: "doc-cardio-1", name: "王大勇 醫師"} ] },
-        ];
+        const departments = Object.entries(DEPT_TEMPLATE).map(([key, info]) => ({
+            id: `dept-${key.toLowerCase()}`,
+            name: info.name,
+            docs: info.docs.map((d, i) => ({ id: `doc-${key.toLowerCase()}-${i}`, name: `${d} 醫師` }))
+        }));
+        // Ensure demo doc is in the first dept
+        departments[0].docs.unshift({ id: demoDocId, name: demoDocName });
 
         departments.forEach(dept => {
             addResource({
@@ -651,8 +665,8 @@ export async function exportFHIRTestCases() {
             { id: "antibiotic", name: "預防性抗生素在手術劃刀前1小時內給予比率", def: "手術劃刀前1小時內給予預防性抗生素人次 / 手術人次 * 100%" }
         ];
 
-        const startDate = new Date("2025-06-01T00:00:00Z").getTime();
-        const endDate = new Date("2026-03-01T23:59:59Z").getTime();
+        const startDate = new Date("2025-06-01T00:00:00+08:00").getTime();
+        const endDate = new Date("2026-02-28T23:59:59+08:00").getTime();
         const dateRangeMs = endDate - startDate;
 
         let globalCounter = 0;
@@ -685,7 +699,9 @@ export async function exportFHIRTestCases() {
 
                 if (indicator.id === "mortality") {
                     // Mortality definition: abnormal if death occurs within 48h
-                    if (i < 20) { // Force 20 specific deaths
+                    // Pattern: Cardio and Neuro have higher mortality
+                    const baseProb = ["dept-cardio", "dept-neuro"].includes(dept.id) ? 0.05 : 0.01;
+                    if (Math.random() < baseProb) { // Probability-based
                         isBad = true;
                         numerator = 1; value = 1;
                         isDeceased = true;
@@ -695,7 +711,9 @@ export async function exportFHIRTestCases() {
                     }
                 } else if (indicator.id === "antibiotic") {
                     // Antibiotic definition: abnormal if NOT given (numerator 0)
-                    if (i < 80) { // Force 80 failures
+                    // Pattern: Ortho and ENT have higher miss rate
+                    const baseProb = ["dept-ortho", "dept-ent"].includes(dept.id) ? 0.15 : 0.03;
+                    if (Math.random() < baseProb) { // Probability-based
                         isBad = true;
                         numerator = 0; value = 0; // Failed to give
                         abnormalReason = "未在劃刀前1小時內給藥";
