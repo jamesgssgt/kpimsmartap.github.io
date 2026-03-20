@@ -166,7 +166,7 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                 
                 {/* Pagination Controls */}
                 {items.length > pageSize && (
-                    <div className="flex items-center justify-center space-x-2 mt-4 text-sm">
+                    <div className="flex items-center justify-center space-x-2 mt-4 pt-4 border-t text-sm">
                         <button
                             className="px-3 py-1 border rounded hover:bg-slate-100 disabled:opacity-50 disabled:cursor-not-allowed"
                             onClick={() => setCurrentPage(1)}

@@ -45,7 +45,13 @@ export default async function DashboardPage(props: {
         const cookieStore = await import("next/headers").then(m => m.cookies());
         const hasActiveSmartSession = cookieStore.has("fhir_access_token");
 
+        // Kick out unauthenticated users
         if (!user && !hasActiveSmartSession) {
+            return redirect("/login");
+        }
+
+        // Kick out users who are using the guest/anonymous fallback but lost their SMART session tokens
+        if (user?.is_anonymous && !hasActiveSmartSession) {
             return redirect("/login");
         }
 
