@@ -184,12 +184,18 @@ export async function syncFhirData() {
             // Fetch Context (Patient, Encounter)
             const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
             const encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id); // Procedure/Obs often have encounter
+            const pracIds = resources.map((r: any) => {
+                if (r.performer?.[0]?.actor?.reference) return r.performer[0].actor.reference.split(/[:\/]/).pop();
+                return null;
+            }).filter((id: string) => !!id);
 
             const patients = await fetchByIds(activeFhirUrl, "Patient", patIds);
             const encounters = await fetchByIds(activeFhirUrl, "Encounter", encIds);
+            const practitioners = await fetchByIds(activeFhirUrl, "Practitioner", pracIds);
 
             const patMap = new Map(patients.map((p: any) => [p.id, p]));
             const encMap = new Map(encounters.map((e: any) => [e.id, e]));
+            const pracMap = new Map(practitioners.map((p: any) => [p.id, p]));
 
             // Apply Denominator Logic (Filter Base Resources)
             let denominatorSet = resources.filter((res: any) => {
@@ -291,15 +297,30 @@ export async function syncFhirData() {
                 }
 
                 let doctorName = "王大明";
+                let doctorId = "H85585021721";
                 if (res.performer && res.performer.length > 0 && res.performer[0].actor?.reference) {
-                    doctorName = res.performer[0].actor.reference.split(/[:\/]/).pop() || "王大明";
+                    const refId = res.performer[0].actor.reference.split(/[:\/]/).pop();
+                    doctorId = refId || doctorId;
+                    const prac = pracMap.get(refId);
+                    if (prac?.name?.[0]?.text) {
+                        doctorName = prac.name[0].text;
+                    } else {
+                        doctorName = refId || doctorName;
+                    }
                 } else if (encounter?.participant && encounter.participant.length > 0 && encounter.participant[0].individual?.reference) {
-                    doctorName = encounter.participant[0].individual.reference.split(/[:\/]/).pop() || "王大明";
+                    const refId = encounter.participant[0].individual.reference.split(/[:\/]/).pop();
+                    doctorId = refId || doctorId;
+                    const prac = pracMap.get(refId);
+                    if (prac?.name?.[0]?.text) {
+                        doctorName = prac.name[0].text;
+                    } else {
+                        doctorName = refId || doctorName;
+                    }
                 }
                 
                 // If it's the demo doc ID, make it pretty
-                if (doctorName === "dr-smart-demo") {
-                    doctorName = "林智明";
+                if (doctorId === "dr-smart-demo") {
+                    doctorName = "林智明 (示範登入)";
                 }
                 // Dates
                 const reportDate = res.performedPeriod?.end || res.effectiveDateTime || new Date().toISOString();
@@ -331,7 +352,7 @@ export async function syncFhirData() {
                     discharge_date: encounter?.period?.end,
                     abnormal_reason: abnormalReason,
                     hospital_name: "市立聯合醫院",
-                    doctor_id: "H85585021721"
+                    doctor_id: doctorId
                 });
 
                 // Aggregate
@@ -346,7 +367,7 @@ export async function syncFhirData() {
                         denominator: 0,
                         unit: "%",
                         hospital_name: "市立聯合醫院",
-                        doctor_id: "H85585021721"
+                        doctor_id: doctorId
                     });
                 }
                 const sum = allSummaryMap.get(key);
