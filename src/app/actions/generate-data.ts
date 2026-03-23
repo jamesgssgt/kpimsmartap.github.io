@@ -869,8 +869,8 @@ export async function exportFHIRTestCases() {
         const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
         if (kpiError) throw new Error("KPI sum error: " + kpiError.message);
 
-        console.log("Successfully generated and synced 7000 patient/encounter records!");
-        return { success: true, data: bundle, count: 7000, message: "成功匯出 7000 筆病患就診記錄資料！" };
+        console.log(`Successfully generated and synced 7000 patient/encounter records and ${kpiDetailsBuffer.length} details!`);
+        return { success: true, data: bundle, count: 7000, message: `成功匯出 7000 筆病患就診記錄資料，並同步寫入 ${kpiDetailsBuffer.length} 筆指標明細預設資料！` };
     } catch (err) {
         console.error("Export FHIR & Sync Error:", err);
         return { success: false, message: "資料生成失敗: " + String(err) };
