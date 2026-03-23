@@ -9,7 +9,7 @@ const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.
 
 const getStartDate = () => {
     const d = new Date();
-    d.setDate(d.getDate() - 180);
+    d.setDate(d.getDate() - 3650); // 擴展到 10 年，確保所有假資料都被納入
     return d.toISOString().split('T')[0];
 };
 
