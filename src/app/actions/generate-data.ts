@@ -581,14 +581,18 @@ export async function exportFHIRTestCases() {
         console.log("Starting massive export & DB sync (4000 cases)...");
         const bundle = {
             resourceType: "Bundle",
-            type: "collection",
+            type: "transaction",
             entry: [] as any[]
         };
 
         const addResource = (res: any) => {
             bundle.entry.push({
                 fullUrl: `urn:uuid:${res.id}`,
-                resource: res
+                resource: res,
+                request: {
+                    method: "PUT",
+                    url: `${res.resourceType}/${res.id}`
+                }
             });
         };
 
