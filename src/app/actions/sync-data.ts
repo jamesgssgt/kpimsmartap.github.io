@@ -24,7 +24,7 @@ async function fetchFhir(url: string) {
     }
 }
 
-async function fetchFhirAll(url: string, maxItems = 5000) {
+async function fetchFhirAll(url: string, maxItems = 20000) {
     let results: any[] = [];
     let currentUrl = url;
     try {
@@ -178,7 +178,7 @@ export async function syncFhirData() {
                 url += `&date=ge${START_DATE}`;
             }
 
-            let resources = await fetchFhirAll(url, 5000);
+            let resources = await fetchFhirAll(url, 20000);
             if (!resources || resources.length === 0) continue;
 
             // Fetch Context (Patient, Encounter)
