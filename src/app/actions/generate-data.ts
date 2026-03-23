@@ -684,9 +684,9 @@ export async function exportFHIRTestCases() {
             });
         });
 
-        // 5. Generate exactly 2000 cases each
+        // 5. Generate exactly 3500 cases each
         const kpiDetailsBuffer: any[] = [];
-        const TARGET_PER_INDICATOR = 2000;
+        const TARGET_PER_INDICATOR = 3500;
         const indicators = [
             { id: "mortality", name: "手術後 48 小時內死亡率", def: "麻醉開始後48小時內死亡(含AAD)" },
             { id: "antibiotic", name: "預防性抗生素在手術劃刀前1小時內給予比率", def: "手術劃刀前1小時內給予預防性抗生素人次 / 手術人次 * 100%" }
