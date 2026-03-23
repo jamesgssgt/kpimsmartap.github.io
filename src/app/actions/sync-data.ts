@@ -4,8 +4,8 @@
 
 import { createClient } from "@/utils/supabase/server";
 
-// Hardcoded for now, same as Python script
-const FHIR_SERVER_URL = "https://launch.smarthealthit.org/v/r4/fhir";
+// Fallback to local 172.16.7.78
+const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.7.78:8082/fhir";
 
 const getStartDate = () => {
     const d = new Date();

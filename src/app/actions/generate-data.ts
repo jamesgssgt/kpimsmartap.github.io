@@ -2,7 +2,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 
-const FHIR_SERVER_URL = "https://launch.smarthealthit.org/v/r4/fhir";
+const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.7.78:8082/fhir";
 const TOTAL_CASES = 300;
 
 
