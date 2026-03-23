@@ -13,7 +13,7 @@ interface Hospital {
 }
 
 const HOSPITALS: Hospital[] = [
-    { code: "TP_GEN", name: "台北綜合醫院", risk: 1.0 }
+    { code: "TP-GEN", name: "台北綜合醫院", risk: 1.0 }
 ];
 
 const DEPT_TEMPLATE = {
@@ -278,7 +278,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             const birthDateStr = birthDate.toISOString().split('T')[0];
 
             const hospNameRaw = chosenDeptObj.org_name.match(/【(.*?)】/)?.[1] || "Unknown Hospital";
-            const hosp_org_id = hCode ? `org-${hCode.toLowerCase()}` : "org-tp_gen";
+            const hosp_org_id = hCode ? `org-${hCode.toLowerCase()}` : "org-tp-gen";
 
             await fhirSave("Patient", {
                 resourceType: "Patient",
@@ -617,7 +617,7 @@ export async function exportFHIRTestCases() {
             resourceType: "PractitionerRole",
             id: `pr-${demoDocId}`,
             practitioner: { reference: `urn:uuid:${demoDocId}` },
-            organization: { reference: `urn:uuid:org-tp_gen` }
+            organization: { reference: `urn:uuid:org-tp-gen` }
         });
 
         const dummyEmail = `demodoc_${demoDocId}@smart.local`.toLowerCase();
@@ -643,7 +643,7 @@ export async function exportFHIRTestCases() {
         await supabase.from("KPI_Detail").delete().neq('id', -1);
 
         // 4. Setup Hospitals and Departments
-        const hospId = "org-tp_gen";
+        const hospId = "org-tp-gen";
         const hospName = "台北綜合醫院";
         addResource({
             resourceType: "Organization",
@@ -678,7 +678,7 @@ export async function exportFHIRTestCases() {
                         resourceType: "PractitionerRole",
                         id: `pr-${doc.id}`,
                         practitioner: { reference: `urn:uuid:${doc.id}` },
-                        organization: { reference: `urn:uuid:org-tp_gen` }
+                        organization: { reference: `urn:uuid:org-tp-gen` }
                     });
                 }
             });
@@ -759,7 +759,7 @@ export async function exportFHIRTestCases() {
                     gender: gender,
                     birthDate: birthStr,
                     deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined,
-                    managingOrganization: { reference: `urn:uuid:org-tp_gen` }
+                    managingOrganization: { reference: `urn:uuid:org-tp-gen` }
                 });
 
                 const encId = `enc-sim-${globalCounter}`;
