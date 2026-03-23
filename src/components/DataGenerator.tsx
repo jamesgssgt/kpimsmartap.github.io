@@ -55,6 +55,7 @@ export function DataGenerator() {
                 link.click();
                 document.body.removeChild(link);
                 URL.revokeObjectURL(url);
+                alert(res.message || "成功匯出測試案例！");
             } else {
                 alert(res.message);
             }
