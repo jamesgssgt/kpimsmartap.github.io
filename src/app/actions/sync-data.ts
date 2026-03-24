@@ -178,7 +178,7 @@ export async function syncFhirData() {
                 url += `&date=ge${START_DATE}`;
             }
 
-            let resources = await fetchFhirAll(url, 20000);
+            let resources = await fetchFhirAll(url, 1500); // 減少最大抓取數量以符合 Vercel Serverless 的執行時間限制 (60秒)
             if (!resources || resources.length === 0) continue;
 
             // Fetch Context (Patient, Encounter)
