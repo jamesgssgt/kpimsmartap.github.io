@@ -21,7 +21,7 @@ export const SMART_CONFIG = {
 
     redirectUri: typeof window !== "undefined"
         ? window.location.origin + "/api/auth/smart/callback"
-        : "http://localhost:3000/api/auth/smart/callback",
+        : (process.env.NEXT_PUBLIC_SITE_URL || process.env.NEXT_PUBLIC_APP_URL || (process.env.VERCEL_URL ? `https://${process.env.VERCEL_URL}` : "http://localhost:3000")) + "/api/auth/smart/callback",
 };
 
 // Helper to get token endpoint (simplified discovery)
