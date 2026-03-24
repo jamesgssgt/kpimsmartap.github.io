@@ -284,6 +284,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             fhirBundleBuffer.push({
                 resourceType: "Patient",
                 id: patId,
+                meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
                 gender: gender,
                 birthDate: birthDateStr,
                 deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined,
@@ -294,6 +295,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             fhirBundleBuffer.push({
                 resourceType: "Encounter",
                 id: encId,
+                meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
                 status: "finished",
                 class: { code: "IMP" }, // Inpatient
                 subject: { reference: `Patient/${patId}` },
@@ -325,6 +327,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             fhirBundleBuffer.push({
                 resourceType: "Procedure",
                 id: procId,
+                meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
                 status: "completed",
                 subject: { reference: `Patient/${patId}` },
                 encounter: { reference: `Encounter/${encId}` },
@@ -794,6 +797,7 @@ export async function exportFHIRTestCases() {
                 addResource({
                     resourceType: "Patient",
                     id: patId,
+                    meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
                     gender: gender,
                     birthDate: birthStr,
                     deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined,
@@ -804,6 +808,7 @@ export async function exportFHIRTestCases() {
                 addResource({
                     resourceType: "Encounter",
                     id: encId,
+                    meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
                     status: "finished",
                     class: { code: "IMP" },
                     subject: { reference: `urn:uuid:${patId}` },
@@ -828,6 +833,7 @@ export async function exportFHIRTestCases() {
                 addResource({
                     resourceType: "Procedure",
                     id: procId,
+                    meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
                     status: "completed",
                     subject: { reference: `urn:uuid:${patId}` },
                     encounter: { reference: `urn:uuid:${encId}` },

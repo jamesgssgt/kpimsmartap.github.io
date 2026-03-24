@@ -171,14 +171,16 @@ export async function syncFhirData() {
             }
 
             // Fetch Base Resources
-            // Support Pagination to fetch all generated cases
-            let url = `${activeFhirUrl}/${baseResource}?_count=500`;
+            // 由於 Sandbox 上有數百萬筆其他人產生的 Synthea 假資料會干擾科別顯示 (UUID)
+            // 這裡我們強制過濾出我們自己生成的資料 (使用 kpim_test_data 標籤)
+            let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=500`;
             // Add date filter if applicable (Procedure, Encounter)
             if (['Procedure', 'Encounter'].includes(baseResource)) {
                 url += `&date=ge${START_DATE}`;
             }
 
-            let resources = await fetchFhirAll(url, 1500); // 減少最大抓取數量以符合 Vercel Serverless 的執行時間限制 (60秒)
+            // 由於只抓取我們自己的核心資料，5000 筆上限不會拖慢速度，且能獲得完整 KPI
+            let resources = await fetchFhirAll(url, 5000); 
             if (!resources || resources.length === 0) continue;
 
             // Fetch Context (Patient, Encounter)
