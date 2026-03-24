@@ -19,14 +19,27 @@ import { useRouter } from "next/navigation";
 export function DataGenerator() {
     const [open, setOpen] = useState(false);
     const [loadingAction, setLoadingAction] = useState<string | null>(null);
+    const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
     const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
     const router = useRouter();
 
     const handleGenerate = async (mode: 'mortality' | 'antibiotic') => {
         setLoadingAction(mode);
-        const res = await generateDataV2(mode);
-        setResult(res);
+        const totalBatches = 8; // Slice into 8 safe chunks
+        setProgress({ current: 0, total: totalBatches });
+
+        let lastRes;
+        for (let i = 0; i < totalBatches; i++) {
+            setProgress({ current: i + 1, total: totalBatches });
+            lastRes = await generateDataV2(mode, i, totalBatches);
+            if (!lastRes || !lastRes.success) {
+                break; // Stop immediately on failure
+            }
+        }
+        
+        setResult(lastRes || { success: false, message: "未知的執行錯誤" });
         setLoadingAction(null);
+        setProgress(null);
     };
 
     const handleClear = async () => {
@@ -90,8 +103,20 @@ export function DataGenerator() {
                                      "將生成 **半年份 (180天)** 的範例資料並寫入系統。此過程可能需要一點時間。"}
                                 </DialogDescription>
                             </DialogHeader>
-                            <div className="py-4 flex justify-center">
-                                {loadingAction && loadingAction !== 'export' && loadingAction !== 'clear' && <Loader2 className="h-8 w-8 animate-spin text-primary" />}
+                            <div className="py-4 flex flex-col items-center justify-center space-y-3">
+                                {loadingAction && loadingAction !== 'export' && loadingAction !== 'clear' && (
+                                    <>
+                                        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+                                        {progress && (
+                                            <div className="text-center font-medium animate-pulse text-primary">
+                                                正在處理批次 {progress.current} / {progress.total}
+                                                <div className="text-xs text-muted-foreground mt-1">
+                                                    (每次上傳約需 3~5 秒，請勿關閉視窗)
+                                                </div>
+                                            </div>
+                                        )}
+                                    </>
+                                )}
                             </div>
                             <DialogFooter className="flex-col sm:flex-row gap-2">
                                 <Button variant="outline" onClick={() => setOpen(false)} disabled={loadingAction !== null} type="button">

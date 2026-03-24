@@ -73,7 +73,7 @@ interface InfraData {
     }[];
 }
 
-async function createInfrastructure() {
+async function createInfrastructure(pushToFhir = true) {
     const infra: Record<string, InfraData> = {};
 
     for (const hosp of HOSPITALS) {
@@ -82,23 +82,27 @@ async function createInfrastructure() {
 
         // Hosp Org
         const hosp_org_id = `org-${hosp.code.toLowerCase()}`;
-        await fhirSave("Organization", {
-            resourceType: "Organization",
-            id: hosp_org_id,
-            name: hosp.name,
-            type: [{ text: "Hospital" }],
-        });
+        if (pushToFhir) {
+            await fhirSave("Organization", {
+                resourceType: "Organization",
+                id: hosp_org_id,
+                name: hosp.name,
+                type: [{ text: "Hospital" }],
+            });
+        }
 
         for (const [d_code, d_info] of Object.entries(DEPT_TEMPLATE)) {
             const dept_org_id = `org-${hosp.code.toLowerCase()}-${d_code.toLowerCase()}`;
             const full_dept_name = `【${hosp.name}】${d_info.name}`;
 
-            await fhirSave("Organization", {
-                resourceType: "Organization",
-                id: dept_org_id,
-                name: full_dept_name,
-                partOf: { reference: `Organization/${hosp_org_id}` }
-            });
+            if (pushToFhir) {
+                await fhirSave("Organization", {
+                    resourceType: "Organization",
+                    id: dept_org_id,
+                    name: full_dept_name,
+                    partOf: { reference: `Organization/${hosp_org_id}` }
+                });
+            }
 
             const dept_docs: string[] = [];
             const doc_names: Record<string, string> = {};
@@ -109,18 +113,20 @@ async function createInfrastructure() {
                 const doc_name_short = surname;
                 const full_name = `${doc_name_short} (${hosp.name.slice(0, 2)})`;
 
-                await fhirSave("Practitioner", {
-                    resourceType: "Practitioner",
-                    id: doc_id,
-                    name: [{ text: full_name }]
-                });
+                if (pushToFhir) {
+                    await fhirSave("Practitioner", {
+                        resourceType: "Practitioner",
+                        id: doc_id,
+                        name: [{ text: full_name }]
+                    });
 
-                await fhirSave("PractitionerRole", {
-                    resourceType: "PractitionerRole",
-                    id: `pr-${doc_id}`,
-                    practitioner: { reference: `Practitioner/${doc_id}` },
-                    organization: { reference: `Organization/${hosp_org_id}` }
-                });
+                    await fhirSave("PractitionerRole", {
+                        resourceType: "PractitionerRole",
+                        id: `pr-${doc_id}`,
+                        practitioner: { reference: `Practitioner/${doc_id}` },
+                        organization: { reference: `Organization/${hosp_org_id}` }
+                    });
+                }
 
                 dept_docs.push(doc_id);
                 doc_names[doc_id] = doc_name_short;
@@ -145,7 +151,7 @@ const DAYS_BACK = Math.ceil((END_DATE.getTime() - START_DATE.getTime()) / (1000 
 // ... (Hospital/Dept/Infra logic remains same)
 
 // Force renamed to bypass Next.js Server Action cache hash clinging to old Date.now() logic
-export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
+export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchIndex = 0, totalBatches = 1) {
     try {
         const fhirBundleBuffer: any[] = [];
         const { createClient } = await import("@/utils/supabase/server");
@@ -153,33 +159,14 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
 
         const indicatorName = mode === 'mortality' ? '手術後 48 小時內死亡率' : '預防性抗生素在手術劃刀前1小時內給予比率';
 
-        // Clear existing data FOR THIS INDICATOR only?
-        // Or clear all? The user says "Separate into two".
-        // If we clear ALL, then running one deletes the other. That is bad.
-        // We should only clear data for the target indicator.
-        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
-        await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
+        if (batchIndex === 0) {
+            await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
+            await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
+        }
 
-        // Also need to clear/reset FHIR? 
-        // Realistically, we can't easily "reset" FHIR without wiping everything.
-        // For this demo, we can just ADD to FHIR (upsert).
-        // But if we re-run, we might duplicate patients if we don't hold state.
-        // The current script manages IDs deterministically-ish or just randoms.
-        // Let's assume we proceed with generating NEW data or Overwriting based on ID collision.
-        // "getLongId" is random.
-        // To avoid exploding DB size, maybe we DO want to clear everything if it's a "Demo Generator".
-        // But the user asked to split. 
-        // Let's compromise: The generator wipes the purely "Transactional" KPI tables for the specific indicator, 
-        // but keeps or overwrites FHIR data. 
-        // actually, safely we can just append, but `KPI` table (summary) needs recalc.
-        // The `KPI` delete above handles the summary.
-        // The `KPI_Detail` delete handles the detail.
-
-        const infra = await createInfrastructure();
+        const pushInfra = batchIndex === 0;
+        const infra = await createInfrastructure(pushInfra);
         const kpiDetailsBuffer = [];
-
-        // Config
-        const targetTotal = 1000;
 
         // Flatten depts
         const allDepts: { hospCode: string; deptInfo: any }[] = [];
@@ -189,7 +176,11 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             }
         }
 
-        let genCounter = 0;
+        const daysPerBatch = Math.ceil(DAYS_BACK / totalBatches);
+        const startDay = batchIndex * daysPerBatch;
+        const endDay = Math.min(startDay + daysPerBatch, DAYS_BACK);
+
+        let genCounter = startDay * allDepts.length;
 
         // Helper to generate a single case
         const createCase = async (dayIndex: number, specificDept?: any, forceAbnormal?: boolean) => {
@@ -413,7 +404,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
         // 1. Coverage Loop
         const coveragePromises = [];
 
-        for (let d = 0; d < DAYS_BACK; d++) {
+        for (let d = startDay; d < endDay; d++) {
             for (const deptItem of allDepts) {
                 // Generate base coverage (normal or random bad)
                 coveragePromises.push(() => createCase(d, deptItem.deptInfo, false));
@@ -436,106 +427,49 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
 
         const coverageResults = await processBatch(coveragePromises);
         generatedItems.push(...coverageResults);
-
-        // Count Abnormals (Only for the active mode's numerator)
-        coverageResults.forEach(item => {
-            if (item.numerator > 0) { // For mortality, num=1 means bad. For antibiotic, num=0 means bad (logic inverted in code?)
-                // Wait, previous code:
-                // Mortality: numerator = 1 (Bad)
-                // Antibiotic: numerator = 1 (Good), value = 1.
-                // Status: !isAntibioticSuccess ? "異常" : "正常"
-
-                // We want to count *rows* that will be 'abnormal' to ensure we have enough 'abnormal' cases for demo.
-                // Mortality: Abnormal if numerator == 1.
-                // Antibiotic: Abnormal if status == '異常' (which means numerator == 0).
-
-                const isAbnormal = item.status === '異常';
-                if (isAbnormal) {
-                    abnormalCounts[item.monthKey] = (abnormalCounts[item.monthKey] || 0) + 1;
-                }
-            }
-        });
-
-        // 2. Abnormal Filling
-        const abnormalPromises = [];
-        const daysByMonth: Record<string, number[]> = {};
-        for (let d = 0; d < DAYS_BACK; d++) {
-            const now = END_DATE;
-            const date = new Date(now.getTime() - d * 24 * 60 * 60 * 1000);
-            const mKey = date.toISOString().substring(0, 7);
-            if (!daysByMonth[mKey]) daysByMonth[mKey] = [];
-            daysByMonth[mKey].push(d);
-        }
-
-        for (const [mKey, days] of Object.entries(daysByMonth)) {
-            const currentCount = abnormalCounts[mKey] || 0;
-            const needed = 10 - currentCount;
-            if (needed > 0) {
-                for (let k = 0; k < needed; k++) {
-                    const dIndex = randomChoice(days);
-                    abnormalPromises.push(() => createCase(dIndex, undefined, true));
-                }
-            }
-        }
-
-        const abnormalResults = await processBatch(abnormalPromises);
-        generatedItems.push(...abnormalResults);
-
-        // 3. Fill Remainder to Target
-        let currentTotal = generatedItems.length;
-        const fillPromises = [];
-        // Increase target if 6 months? 1000 might be thin for 180 days * 9 depts = 1620 min coverage?
-        // 180 days * 9 depts = 1620 cases just for 1/day/dept.
-        // So target should be higher, maybe 2000? Or just let coverage be the floor.
-        // If coverage is ~1600, target 1000 is useless.
-        // Let's set target to max(2000, coverage + 100).
-        const realTarget = Math.max(2000, generatedItems.length + 50);
-
-        while (currentTotal < realTarget) {
-            const dIndex = randomInt(0, DAYS_BACK - 1);
-            fillPromises.push(() => createCase(dIndex, undefined, false));
-            currentTotal++;
-        }
-
-        const fillResults = await processBatch(fillPromises);
-        generatedItems.push(...fillResults);
-
         kpiDetailsBuffer.push(...generatedItems);
 
-        // ... Summary Calculation & Save Logic (Only for the indicatorName we are processing) ...
-        const summaryMap = new Map<string, any>();
-        for (const d of kpiDetailsBuffer) {
-            const key = `${d.department}|${d.doctor}|${d.indicator_name}`;
-            if (!summaryMap.has(key)) {
-                summaryMap.set(key, {
-                    department: d.department,
-                    doctor: d.doctor,
-                    indicator_name: d.indicator_name,
-                    indicator_def: d.indicator_def,
-                    numerator: 0,
-                    denominator: 0,
-                    unit: d.unit
-                });
-            }
-            const item = summaryMap.get(key);
-            item.numerator += d.numerator;
-            item.denominator += d.denominator;
-        }
-
-        const kpiSummaryList = Array.from(summaryMap.values()).map(item => ({
-            ...item,
-            value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
-        }));
-
-        const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
-        if (kpiError) console.error("Error saving KPI Summary:", kpiError);
-
+        // Push pure details into Supabase first
         const cleanDetails = kpiDetailsBuffer.map(({ monthKey, ...rest }) => rest);
         const { error: detailError } = await supabase.from("KPI_Detail").insert(cleanDetails);
         if (detailError) console.error("Error saving KPI Details:", detailError);
 
-        if (kpiError || detailError) {
-            return { success: false, message: "生成過程中發生資料庫錯誤" };
+        if (detailError) {
+            return { success: false, message: "生成過程中發生資料庫錯誤: " + detailError.message };
+        }
+
+        // Summary Calculation & Save Logic (Only for the LAST batch, fetch all details and aggregate)
+        if (batchIndex === totalBatches - 1) {
+            console.log(`Final batch reached. Calculating KPI summary...`);
+            const { data: allDetails, error: fetchErr } = await supabase.from("KPI_Detail").select("*").eq("indicator_name", indicatorName);
+            if (!fetchErr && allDetails) {
+                const summaryMap = new Map<string, any>();
+                for (const d of allDetails) {
+                    const key = `${d.department}|${d.doctor}|${d.indicator_name}`;
+                    if (!summaryMap.has(key)) {
+                        summaryMap.set(key, {
+                            department: d.department,
+                            doctor: d.doctor,
+                            indicator_name: d.indicator_name,
+                            indicator_def: d.indicator_def,
+                            numerator: 0,
+                            denominator: 0,
+                            unit: d.unit
+                        });
+                    }
+                    const item = summaryMap.get(key);
+                    item.numerator += d.numerator;
+                    item.denominator += d.denominator;
+                }
+
+                const kpiSummaryList = Array.from(summaryMap.values()).map(item => ({
+                    ...item,
+                    value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
+                }));
+
+                const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
+                if (kpiError) console.error("Error saving KPI Summary:", kpiError);
+            }
         }
 
         // Upload FHIR Resources in Transaction Bundles (Chunk size 150)
