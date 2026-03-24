@@ -1,7 +1,5 @@
 "use server";
 
-export const maxDuration = 60;
-
 import { createClient } from "@/utils/supabase/server";
 
 const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.7.78:8082/fhir";
@@ -149,7 +147,6 @@ const DAYS_BACK = Math.ceil((END_DATE.getTime() - START_DATE.getTime()) / (1000 
 // Force renamed to bypass Next.js Server Action cache hash clinging to old Date.now() logic
 export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
     try {
-        const fhirBundleBuffer: any[] = [];
         const { createClient } = await import("@/utils/supabase/server");
         const supabase = await createClient();
 
@@ -283,7 +280,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             const hospNameRaw = chosenDeptObj.org_name.match(/【(.*?)】/)?.[1] || "Unknown Hospital";
             const hosp_org_id = hCode ? `org-${hCode.toLowerCase()}` : "org-tp-gen";
 
-            fhirBundleBuffer.push({
+            await fhirSave("Patient", {
                 resourceType: "Patient",
                 id: patId,
                 gender: gender,
@@ -293,7 +290,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             });
 
             const encId = `enc-${mode}-${genCounter}`;
-            fhirBundleBuffer.push({
+            await fhirSave("Encounter", {
                 resourceType: "Encounter",
                 id: encId,
                 status: "finished",
@@ -324,7 +321,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
             ];
             const selectedIcd = randomChoice(icdCodes);
 
-            fhirBundleBuffer.push({
+            await fhirSave("Procedure", {
                 resourceType: "Procedure",
                 id: procId,
                 status: "completed",
@@ -536,39 +533,6 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic') {
         if (kpiError || detailError) {
             return { success: false, message: "生成過程中發生資料庫錯誤" };
         }
-        // Upload FHIR Resources in Transaction Bundles
-        console.log(`Sending ${fhirBundleBuffer.length} FHIR resources in batches...`);
-        const chunkSize = 500;
-        let fhirBaseUrl = FHIR_SERVER_URL;
-        if (fhirBaseUrl.endsWith('/')) fhirBaseUrl = fhirBaseUrl.slice(0, -1);
-        
-        for (let i = 0; i < fhirBundleBuffer.length; i += chunkSize) {
-            const chunk = fhirBundleBuffer.slice(i, i + chunkSize);
-            const bundle = {
-                resourceType: "Bundle",
-                type: "transaction",
-                entry: chunk.map(res => ({
-                    fullUrl: `urn:uuid:${res.id}`,
-                    resource: res,
-                    request: { method: "PUT", url: `${res.resourceType}/${res.id}` }
-                }))
-            };
-            try {
-                const bRes = await fetch(fhirBaseUrl, {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify(bundle)
-                });
-                if (!bRes.ok) {
-                    console.error("FHIR Bundle push failed: " + bRes.status);
-                    const errText = await bRes.text();
-                    console.error(errText);
-                }
-            } catch (e) {
-                console.error("FHIR Bundle network error: ", e);
-            }
-        }
-
 
         // Trigger Next.js Dev Server Recompile to bust the old logic cache
         return { 
