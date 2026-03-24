@@ -1,7 +1,5 @@
 "use server";
 
-export const maxDuration = 60;
-
 import { createClient } from "@/utils/supabase/server";
 
 const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.7.78:8082/fhir";

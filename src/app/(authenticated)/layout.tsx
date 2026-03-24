@@ -3,6 +3,8 @@ import SmartLoader from "@/components/SmartLoader";
 import { SidebarNav } from "@/components/dashboard/SidebarNav";
 import { SettingsProvider } from "@/contexts/SettingsContext";
 
+export const maxDuration = 60;
+
 export const metadata: Metadata = {
     title: "KPIM Dashboard",
     description: "KPI Management Dashboard",
