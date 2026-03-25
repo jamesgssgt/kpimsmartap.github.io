@@ -116,7 +116,7 @@ export function DataGenerator() {
                 <DialogTrigger asChild>
                     <Button variant="outline" type="button" disabled={loadingAction !== null}>開啟資料生成器</Button>
                 </DialogTrigger>
-                <DialogContent className="sm:max-w-[425px]" onInteractOutside={(e) => e.preventDefault()}>
+                <DialogContent className="sm:max-w-[650px] w-[95vw]" onInteractOutside={(e) => e.preventDefault()}>
                     {!result ? (
                         <>
                             <DialogHeader>
@@ -140,7 +140,7 @@ export function DataGenerator() {
                                             </div>
                                         )}
                                         {logs.length > 0 && (
-                                            <div className="w-full mt-4 bg-muted/50 rounded-md p-3 max-h-40 overflow-y-auto text-xs font-mono text-left space-y-1">
+                                            <div className="w-full mt-4 bg-muted/50 rounded-md p-4 h-64 overflow-y-auto text-sm font-mono text-left space-y-2">
                                                 {logs.map((log, idx) => (
                                                     <div key={idx} className={log.includes('錯誤') || log.includes('失敗') ? 'text-destructive font-bold' : 'text-muted-foreground'}>
                                                         {log}
