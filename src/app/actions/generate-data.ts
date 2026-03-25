@@ -73,7 +73,7 @@ interface InfraData {
     }[];
 }
 
-async function createInfrastructure(pushToFhir = true) {
+async function createInfrastructure(pushToFhir = true, fhirBundleBuffer: any[] = []) {
     const infra: Record<string, InfraData> = {};
 
     for (const hosp of HOSPITALS) {
@@ -83,7 +83,7 @@ async function createInfrastructure(pushToFhir = true) {
         // Hosp Org
         const hosp_org_id = `org-${hosp.code.toLowerCase()}`;
         if (pushToFhir) {
-            await fhirSave("Organization", {
+            fhirBundleBuffer.push({
                 resourceType: "Organization",
                 id: hosp_org_id,
                 name: hosp.name,
@@ -96,7 +96,7 @@ async function createInfrastructure(pushToFhir = true) {
             const full_dept_name = `【${hosp.name}】${d_info.name}`;
 
             if (pushToFhir) {
-                await fhirSave("Organization", {
+                fhirBundleBuffer.push({
                     resourceType: "Organization",
                     id: dept_org_id,
                     name: full_dept_name,
@@ -114,13 +114,13 @@ async function createInfrastructure(pushToFhir = true) {
                 const full_name = `${doc_name_short} (${hosp.name.slice(0, 2)})`;
 
                 if (pushToFhir) {
-                    await fhirSave("Practitioner", {
+                    fhirBundleBuffer.push({
                         resourceType: "Practitioner",
                         id: doc_id,
                         name: [{ text: full_name }]
                     });
 
-                    await fhirSave("PractitionerRole", {
+                    fhirBundleBuffer.push({
                         resourceType: "PractitionerRole",
                         id: `pr-${doc_id}`,
                         practitioner: { reference: `Practitioner/${doc_id}` },
@@ -165,7 +165,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
         }
 
         const pushInfra = batchIndex === 0;
-        const infra = await createInfrastructure(pushInfra);
+        const infra = await createInfrastructure(pushInfra, fhirBundleBuffer);
         const kpiDetailsBuffer = [];
 
         // Flatten depts
