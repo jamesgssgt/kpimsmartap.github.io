@@ -20,23 +20,47 @@ export function DataGenerator() {
     const [open, setOpen] = useState(false);
     const [loadingAction, setLoadingAction] = useState<string | null>(null);
     const [progress, setProgress] = useState<{ current: number; total: number } | null>(null);
+    const [logs, setLogs] = useState<string[]>([]);
     const [result, setResult] = useState<{ success: boolean; message: string } | null>(null);
     const router = useRouter();
 
     const handleGenerate = async (mode: 'mortality' | 'antibiotic') => {
         setLoadingAction(mode);
-        const totalBatches = 8; // Slice into 8 safe chunks
+        const totalBatches = 16; // 增加切割批次減少單次超時風險
         setProgress({ current: 0, total: totalBatches });
+        setLogs([]);
 
-        let lastRes;
+        let lastRes: { success: boolean; message: string } | undefined;
         for (let i = 0; i < totalBatches; i++) {
             setProgress({ current: i + 1, total: totalBatches });
-            lastRes = await generateDataV2(mode, i, totalBatches);
-            if (!lastRes || !lastRes.success) {
-                break; // Stop immediately on failure
+            setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] 開始處理批次 ${i + 1}/${totalBatches}...`]);
+            
+            try {
+                lastRes = await generateDataV2(mode, i, totalBatches);
+                
+                if (lastRes) {
+                    const msg = lastRes.message;
+                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] ${msg}`]);
+                }
+                
+                if (!lastRes || !lastRes.success) {
+                    setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] 發生錯誤，已中斷執行。`]);
+                    break; // Stop immediately on failure
+                }
+            } catch (err: any) {
+                console.error(err);
+                const errMsg = err?.message || String(err);
+                setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] 發生執行錯誤: ${errMsg}`]);
+                lastRes = { success: false, message: `無法完成批次 ${i + 1}: ${errMsg}` };
+                break;
             }
         }
         
+        if (lastRes && lastRes.success) {
+            setLogs(prev => [...prev, `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] 🎉 所有資料生成完畢！`]);
+            lastRes.message = "所有資料已成功生成與上傳！";
+        }
+
         setResult(lastRes || { success: false, message: "未知的執行錯誤" });
         setLoadingAction(null);
         setProgress(null);
@@ -103,7 +127,7 @@ export function DataGenerator() {
                                      "將生成 **半年份 (180天)** 的範例資料並寫入系統。此過程可能需要一點時間。"}
                                 </DialogDescription>
                             </DialogHeader>
-                            <div className="py-4 flex flex-col items-center justify-center space-y-3">
+                            <div className="py-4 flex flex-col items-center justify-center space-y-3 w-full">
                                 {loadingAction && loadingAction !== 'export' && loadingAction !== 'clear' && (
                                     <>
                                         <Loader2 className="h-8 w-8 animate-spin text-primary" />
@@ -113,6 +137,15 @@ export function DataGenerator() {
                                                 <div className="text-xs text-muted-foreground mt-1">
                                                     (每次上傳約需 3~5 秒，請勿關閉視窗)
                                                 </div>
+                                            </div>
+                                        )}
+                                        {logs.length > 0 && (
+                                            <div className="w-full mt-4 bg-muted/50 rounded-md p-3 max-h-40 overflow-y-auto text-xs font-mono text-left space-y-1">
+                                                {logs.map((log, idx) => (
+                                                    <div key={idx} className={log.includes('錯誤') || log.includes('失敗') ? 'text-destructive font-bold' : 'text-muted-foreground'}>
+                                                        {log}
+                                                    </div>
+                                                ))}
                                             </div>
                                         )}
                                     </>

@@ -512,7 +512,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
         // Trigger Next.js Dev Server Recompile to bust the old logic cache
         return { 
             success: true, 
-            message: `成功生成「${indicatorName}」共 ${generatedItems.length} 筆範例資料！\n時間範圍：2025/06/01 ~ 2026/02/28` 
+            message: `批次 ${batchIndex + 1}/${totalBatches} 完成: 生成 ${generatedItems.length} 筆資料 (FHIR 上傳 ${bundleSuccess}/${fhirBundleBuffer.length} 成功)` 
         };
     } catch (err) {
         console.error(err);
