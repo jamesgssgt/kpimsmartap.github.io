@@ -141,7 +141,7 @@ export function DataGenerator() {
                                         )}
                                         {logs.length > 0 && (
                                             <div className="w-full mt-4 bg-muted/50 rounded-md p-4 h-64 overflow-y-auto text-sm font-mono text-left space-y-2">
-                                                {logs.map((log, idx) => (
+                                                {[...logs].reverse().map((log, idx) => (
                                                     <div key={idx} className={log.includes('錯誤') || log.includes('失敗') ? 'text-destructive font-bold' : 'text-muted-foreground'}>
                                                         {log}
                                                     </div>
