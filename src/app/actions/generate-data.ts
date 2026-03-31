@@ -491,6 +491,8 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
         }
 
         let bundleSuccess = 0;
+        let isReadOnly = false;
+
         for (let i = 0; i < fhirBundleBuffer.length; i += chunkSize) {
             const chunk = fhirBundleBuffer.slice(i, i + chunkSize);
             const bundle = {
@@ -506,17 +508,21 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
                 const headers: Record<string, string> = { "Content-Type": "application/json" };
                 if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
-                console.log(`[FHIR Push] Sending Bundle to: ${fhirBaseUrl}`);
+                console.log(`[FHIR Push] Sending Bundle (${chunk.length} resources) to: ${fhirBaseUrl}`);
                 const bRes = await fetch(fhirBaseUrl, {
                     method: "POST",
                     headers,
                     body: JSON.stringify(bundle),
                     cache: 'no-store'
                 });
+
                 if (!bRes.ok) {
-                    console.error(`FHIR Bundle push failed for chunk ${i / chunkSize}: ` + bRes.status);
+                    if (bRes.status === 403 || bRes.status === 405) {
+                        isReadOnly = true;
+                    }
+                    console.error(`FHIR Bundle push failed for chunk ${i / chunkSize}: ${bRes.status}`);
                     const errText = await bRes.text();
-                    console.error(errText);
+                    console.error("FHIR Error Response:", errText);
                 } else {
                     bundleSuccess += chunk.length;
                 }
@@ -524,7 +530,12 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
                 console.error(`FHIR Bundle network error chunks ${i}: `, e);
             }
         }
-        console.log(`Finished sending FHIR. ${bundleSuccess}/${fhirBundleBuffer.length} succeeded.`);
+
+        const msg = isReadOnly 
+            ? `批次 ${batchIndex + 1}/${totalBatches} 完成！(註：FHIR Server 為唯讀模式，僅更新儀表板 DB 資料)`
+            : `批次 ${batchIndex + 1}/${totalBatches} 完成！(FHIR 上傳 ${bundleSuccess}/${fhirBundleBuffer.length} 成功)`;
+
+        console.log(`Finished logic. ${bundleSuccess}/${fhirBundleBuffer.length} FHIR resources uploaded. Read-Only mode detected: ${isReadOnly}`);
 
         // Trigger Next.js Dev Server Recompile to bust the old logic cache
         return { 

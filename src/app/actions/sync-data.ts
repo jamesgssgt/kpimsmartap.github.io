@@ -152,7 +152,7 @@ export async function getFhirRecordCount(indicatorName: string) {
         }
 
         const START_DATE = getStartDate();
-        let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_summary=count`;
+        let url = `${activeFhirUrl}/${baseResource}?_summary=count`;
         if (['Procedure', 'Encounter'].includes(baseResource)) {
             url += `&date=ge${START_DATE}`;
         }
@@ -200,7 +200,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             else throw new Error("無法判斷基礎資源類型");
         }
 
-        let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=500`;
+        let url = `${activeFhirUrl}/${baseResource}?_count=500`;
         if (['Procedure', 'Encounter'].includes(baseResource)) {
             url += `&date=ge${START_DATE}`;
         }
