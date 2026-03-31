@@ -56,7 +56,7 @@ export async function getBackendAccessToken(fhirBaseUrl: string): Promise<string
             grant_type: 'client_credentials',
             client_assertion_type: 'urn:ietf:params:oauth:client-assertion-type:jwt-bearer',
             client_assertion: clientAssertion,
-            scope: "system/*.read", // Backend service requested scope
+            scope: "system/*.read system/*.write", // Requesting both read and write for data generation
         });
 
         console.log(`Requesting backend access token from ${tokenUrl}`);

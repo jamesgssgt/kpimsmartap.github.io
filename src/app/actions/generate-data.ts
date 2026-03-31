@@ -476,8 +476,19 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
         console.log(`Sending ${fhirBundleBuffer.length} FHIR resources in batches of 150...`);
         const chunkSize = 150;
         let fhirBaseUrl = FHIR_SERVER_URL;
+        // Fetch URL from system config dynamically if user changed it in UI
+        const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
+        if (sysData?.SysValue) fhirBaseUrl = sysData.SysValue;
         if (fhirBaseUrl.endsWith('/')) fhirBaseUrl = fhirBaseUrl.slice(0, -1);
         
+        const { getBackendAccessToken } = await import("@/utils/backend-auth");
+        let accessToken: string | null = null;
+        try {
+            accessToken = await getBackendAccessToken(fhirBaseUrl);
+        } catch (authErr) {
+            console.error("Backend Auth Failed during generation (Proceeding without token): ", authErr);
+        }
+
         let bundleSuccess = 0;
         for (let i = 0; i < fhirBundleBuffer.length; i += chunkSize) {
             const chunk = fhirBundleBuffer.slice(i, i + chunkSize);
@@ -491,9 +502,12 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
                 }))
             };
             try {
+                const headers: Record<string, string> = { "Content-Type": "application/json" };
+                if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
+
                 const bRes = await fetch(fhirBaseUrl, {
                     method: "POST",
-                    headers: { "Content-Type": "application/json" },
+                    headers,
                     body: JSON.stringify(bundle)
                 });
                 if (!bRes.ok) {

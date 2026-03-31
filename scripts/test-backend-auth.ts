@@ -5,7 +5,7 @@ async function main() {
     const { getBackendAccessToken } = await import('../src/utils/backend-auth');
     console.log("Starting backend auth test...");
     try {
-        const fhirBaseUrl = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "https://launch.smarthealthit.org/v/r4/fhir";
+        const fhirBaseUrl = process.argv[2] || process.env.NEXT_PUBLIC_FHIR_BASE_URL || "https://launch.smarthealthit.org/v/r4/fhir";
         console.log(`Using FHIR Base URL: ${fhirBaseUrl}`);
         
         const token = await getBackendAccessToken(fhirBaseUrl);
