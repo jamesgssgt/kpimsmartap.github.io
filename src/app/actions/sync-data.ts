@@ -14,11 +14,12 @@ const getStartDate = () => {
 
 async function fetchFhir(url: string, accessToken?: string | null) {
     try {
+        console.log(`[FHIR Fetch] ${url}`);
         const headers: Record<string, string> = { "Accept": "application/json" };
         if (accessToken) {
             headers["Authorization"] = `Bearer ${accessToken}`;
         }
-        const res = await fetch(url, { headers });
+        const res = await fetch(url, { headers, cache: 'no-store' });
         if (!res.ok) throw new Error(`Status ${res.status}`);
         return await res.json();
     } catch (e) {
@@ -37,8 +38,8 @@ async function fetchFhirAll(url: string, maxItems = 20000, accessToken?: string 
         }
 
         while (currentUrl && results.length < maxItems) {
-            console.log("Fetching FHIR page:", currentUrl);
-            const res = await fetch(currentUrl, { headers });
+            console.log(`[FHIR FetchAll] Page: ${currentUrl}`);
+            const res = await fetch(currentUrl, { headers, cache: 'no-store' });
             if (!res.ok) throw new Error(`Status ${res.status}`);
             const bundle = await res.json();
             if (bundle && bundle.entry) {

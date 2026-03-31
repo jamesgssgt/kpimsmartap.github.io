@@ -475,11 +475,12 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
         // Upload FHIR Resources in Transaction Bundles (Chunk size 150)
         console.log(`Sending ${fhirBundleBuffer.length} FHIR resources in batches of 150...`);
         const chunkSize = 150;
-        let fhirBaseUrl = FHIR_SERVER_URL;
         // Fetch URL from system config dynamically if user changed it in UI
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
-        if (sysData?.SysValue) fhirBaseUrl = sysData.SysValue;
+        let fhirBaseUrl = sysData?.SysValue || FHIR_SERVER_URL;
         if (fhirBaseUrl.endsWith('/')) fhirBaseUrl = fhirBaseUrl.slice(0, -1);
+        
+        console.log(`[FHIR Generate] Target URL: ${fhirBaseUrl}`);
         
         const { getBackendAccessToken } = await import("@/utils/backend-auth");
         let accessToken: string | null = null;
@@ -505,10 +506,12 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
                 const headers: Record<string, string> = { "Content-Type": "application/json" };
                 if (accessToken) headers["Authorization"] = `Bearer ${accessToken}`;
 
+                console.log(`[FHIR Push] Sending Bundle to: ${fhirBaseUrl}`);
                 const bRes = await fetch(fhirBaseUrl, {
                     method: "POST",
                     headers,
-                    body: JSON.stringify(bundle)
+                    body: JSON.stringify(bundle),
+                    cache: 'no-store'
                 });
                 if (!bRes.ok) {
                     console.error(`FHIR Bundle push failed for chunk ${i / chunkSize}: ` + bRes.status);
