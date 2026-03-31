@@ -61,17 +61,21 @@ async function fetchFhirAll(url: string, maxItems = 20000, accessToken?: string 
 async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], accessToken?: string | null) {
     if (!ids.length) return [];
     const uniqueIds = Array.from(new Set(ids));
-    const results = [];
-
+    
+    // 將 ID 列表拆分為每 50 個一組的 Chunk
+    const chunks: string[][] = [];
     for (let i = 0; i < uniqueIds.length; i += 50) {
-        const chunk = uniqueIds.slice(i, i + 50);
-        const idsStr = chunk.join(",");
-        const data = await fetchFhir(`${baseUrl}/${resourceType}?_id=${idsStr}&_count=100`, accessToken);
-        if (data && data.entry) {
-            results.push(...data.entry.map((e: any) => e.resource));
-        }
+        chunks.push(uniqueIds.slice(i, i + 50));
     }
-    return results;
+
+    // 使用 Promise.all 並行抓取所有 Chunk，大幅縮短執行時間
+    const results = await Promise.all(chunks.map(async (chunk) => {
+        const idsStr = chunk.join(",");
+        const data = await fetchFhir(`${baseUrl}/${resourceType}?_id=${idsStr}&_count=50`, accessToken);
+        return data?.entry?.map((e: any) => e.resource) || [];
+    }));
+
+    return results.flat();
 }
 
 function getValueByPath(obj: any, path: string) {
@@ -195,12 +199,13 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             else throw new Error("無法判斷基礎資源類型");
         }
 
-        let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=200`;
+        let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=500`;
         if (['Procedure', 'Encounter'].includes(baseResource)) {
             url += `&date=ge${START_DATE}`;
         }
 
-        let resources = await fetchFhirAll(url, 200, accessToken); 
+        // 提升抓取上限至 10,000 筆，並利用並行優化處理關聯資料
+        let resources = await fetchFhirAll(url, 10000, accessToken); 
         if (!resources || resources.length === 0) return { success: true, message: "無符合資料。" };
 
         const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
