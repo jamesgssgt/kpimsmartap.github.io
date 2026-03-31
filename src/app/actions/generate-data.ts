@@ -169,7 +169,6 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
         const pushInfra = batchIndex === 0;
         const infra = await createInfrastructure(pushInfra, fhirBundleBuffer);
 
-        const kpiDetailsBuffer = [];
 
         // Flatten depts
         const allDepts: { hospCode: string; deptInfo: any }[] = [];
