@@ -146,7 +146,7 @@ export default async function DashboardPage(props: {
             .select("*")
             .eq("kpi_id", activeKpiId)
             .order("data_date", { ascending: false })
-            .limit(5000);
+            .limit(20000); // 增加上限以確保統計窗格正確
 
         let kpiItems: KPIItem[] = kpiDataRaw || [];
         
@@ -163,7 +163,7 @@ export default async function DashboardPage(props: {
             denominator: d.denominator_value,
             value: d.kpi_value,
             unit: "%",
-            status: d.kpi_value > 0 ? "異常" : "正常", 
+            status: "正常", // Initial placeholder, will refine during filtering if needed
             patient_id: d.patient_id,
             patient_gender: d.patient_gender,
             patient_birthday: d.patient_birth_date,
@@ -198,8 +198,7 @@ export default async function DashboardPage(props: {
 
         const globalMaxDateTs = allDates.length > 0 ? Math.max(...allDates) : 0;
         const globalMaxDateStr = globalMaxDateTs > 0 ? new Date(globalMaxDateTs).toISOString().split('T')[0] : "";
-        const globalMinDateStr = globalMaxDateTs > 0 ? "2026-01-01" : ""; 
-
+        const globalMinDateStr = globalMaxDateTs > 0 ? "2025-06-01" : "2025-06-01"; // 預設涵蓋測試數據起點秋季數據
         // 4. Apply Date Range Filter to Data
         let filteredDetails = [...kpiDetails];
         if (startDate) {
@@ -337,7 +336,9 @@ export default async function DashboardPage(props: {
         const abnormalItems = kpiDetails
             .filter((item) => {
                 if (!item.report_date) return false;
-                return item.status === "異常" && item.report_date.startsWith(targetAbnormalMonth);
+                const isPositiveKPI = item.indicator_name.includes("比率") || item.indicator_name.includes("達成率") || item.indicator_name.includes("成功率");
+                const isAbnormal = isPositiveKPI ? (Number(item.numerator) === 0) : (Number(item.numerator) > 0);
+                return isAbnormal && item.report_date.startsWith(targetAbnormalMonth);
             })
             .sort((a, b) => {
                 if (a.report_date && b.report_date) return new Date(b.report_date).getTime() - new Date(a.report_date).getTime();

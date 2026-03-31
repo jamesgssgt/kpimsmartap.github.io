@@ -502,11 +502,13 @@ export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic
         const supabase = await createClient();
 
         if (mode === 'all') {
-            const { error: e1 } = await supabase.from("KPI").delete().neq('id', -1); 
-            const { error: e2 } = await supabase.from("kpi_detail").delete().neq('id', -1); 
+            const { error: e1 } = await supabase.from("KPI").delete().neq('id', '00000000-0000-0000-0000-000000000000'); 
+            const { error: e2 } = await supabase.from("kpi_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000'); 
+            const { error: e3 } = await supabase.from("kpi_ft_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
 
             if (e1) throw new Error("Error clearing KPI: " + e1.message);
             if (e2) throw new Error("Error clearing kpi_detail: " + e2.message);
+            if (e3) throw new Error("Error clearing kpi_ft_detail: " + e3.message);
         } else {
             const indicatorName = mode === 'mortality' ? '手術後 48 小時內死亡率' : '預防性抗生素在手術劃刀前1小時內給予比率';
             const { data: kpi } = await supabase.from("kpi_definitions").select("kpiid").eq("name", indicatorName).single();
@@ -583,8 +585,9 @@ export async function exportFHIRTestCases() {
             });
         }
 
-        await supabase.from("KPI").delete().neq('id', -1);
-        await supabase.from("kpi_detail").delete().neq('id', -1);
+        await supabase.from("KPI").delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from("kpi_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from("kpi_ft_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
 
         const hospId = "org-tp-gen";
         const hospName = "台北綜合醫院";
@@ -641,6 +644,9 @@ export async function exportFHIRTestCases() {
 
         for (const indicator of indicators) {
             const { data: kpiDef } = await supabase.from("kpi_definitions").select("kpiid").eq("name", indicator.name).single();
+            const { data: ftInf } = await supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpiDef?.kpiid).order('seq');
+            
+            const ftDataBuffer: any[] = [];
             
             for (let i = 0; i < TARGET_PER_INDICATOR; i++) {
                 globalCounter++;
@@ -713,7 +719,7 @@ export async function exportFHIRTestCases() {
                     }
                 });
 
-                kpiDetailsBuffer.push({
+                const detailRow = {
                     kpi_id: kpiDef?.kpiid,
                     data_date: opEnd.toISOString().split('T')[0],
                     department: dept.name,
@@ -726,13 +732,88 @@ export async function exportFHIRTestCases() {
                     numerator_value: numerator,
                     denominator_value: 1,
                     kpi_value: value
-                });
-            }
-        }
+                };
+                kpiDetailsBuffer.push(detailRow);
 
-        for (let i = 0; i < kpiDetailsBuffer.length; i += 100) {
-            const batch = kpiDetailsBuffer.slice(i, i + 100);
-            await supabase.from("kpi_detail").insert(batch);
+                // 生成 FT 鑽取資料
+                if (ftInf && ftInf.length > 0) {
+                    const ftRow: any = { _patient_id: patId }; // 臨時關聯鍵
+                    ftInf.forEach(f => {
+                        const path = f.fhir_source || '';
+                        let val = "";
+                        if (path.includes("Patient.identifier")) val = patId.replace('pat-sim-', 'P');
+                        else if (path.includes("Patient.name")) val = `模擬病患 ${globalCounter}`;
+                        else if (path.includes("Procedure.code")) val = indicator.id === 'mortality' ? "OP-001" : "AB-101";
+                        else if (path.includes("Practitioner.name") || path.includes("performer")) val = doc.name;
+                        else if (path.includes("Organization") || path.includes("serviceType")) val = dept.name;
+                        else if (path.includes("start")) val = opStart.toLocaleString();
+                        else if (path.includes("end")) val = opEnd.toLocaleString();
+                        else val = "N/A";
+
+                        if (f.column_slot) ftRow[f.column_slot] = val;
+                    });
+                    ftDataBuffer.push(ftRow);
+                }
+            }
+
+            // --- 寫入此指標的資料 ---
+            for (let j = 0; j < kpiDetailsBuffer.length; j += 500) {
+                const batch = kpiDetailsBuffer.slice(j, j + 500);
+                const { data: inserted, error: insErr } = await supabase
+                    .from("kpi_detail")
+                    .insert(batch)
+                    .select("id, patient_id");
+
+                if (!insErr && inserted && ftDataBuffer.length > 0) {
+                    const insMap = new Map(inserted.map(row => [row.patient_id, row.id]));
+                    const ftToInsert = ftDataBuffer
+                        .filter(fd => insMap.has(fd._patient_id))
+                        .map(fd => {
+                            const { _patient_id, ...rest } = fd;
+                            return { kpi_detail_id: insMap.get(_patient_id), ...rest };
+                        });
+                    
+                    if (ftToInsert.length > 0) {
+                        for (let k = 0; k < ftToInsert.length; k += 500) {
+                            await supabase.from("kpi_ft_detail").insert(ftToInsert.slice(k, k + 500));
+                        }
+                    }
+                }
+            }
+            
+            // --- 更新 KPI 總表 (Summary) ---
+            if (kpiDetailsBuffer.length > 0) {
+                const summaryMap = new Map<string, any>();
+                for (const d of kpiDetailsBuffer) {
+                    const key = `${d.department}|${d.doctor_name}|${indicator.name}`;
+                    if (!summaryMap.has(key)) {
+                        summaryMap.set(key, {
+                            department: d.department,
+                            doctor: d.doctor_name,
+                            doctor_id: d.doctor_id,
+                            indicator_name: indicator.name,
+                            indicator_def: indicator.def,
+                            numerator: 0,
+                            denominator: 0,
+                            unit: "%"
+                        });
+                    }
+                    const sum = summaryMap.get(key);
+                    sum.numerator += d.numerator_value;
+                    sum.denominator += d.denominator_value;
+                }
+
+                const summaryToUpsert = Array.from(summaryMap.values()).map(s => ({
+                    ...s,
+                    value: s.denominator > 0 ? parseFloat(((s.numerator / s.denominator) * 100).toFixed(2)) : 0
+                }));
+                
+                await supabase.from("KPI").upsert(summaryToUpsert, { onConflict: "department, doctor, indicator_name" });
+            }
+
+            // 清空 buffer 以處理下一個指標
+            kpiDetailsBuffer.length = 0;
+            ftDataBuffer.length = 0;
         }
 
         return { success: true, message: "Export and Sync successful.", data: bundle };

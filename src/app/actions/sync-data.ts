@@ -352,6 +352,8 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             const sum = allSummaryMap.get(key);
             sum.numerator += (isNumerator ? 1 : 0);
             sum.denominator += 1;
+
+            allFtDetails.push(ftData); // Store linked ft data
         }
 
         if (allDetails.length > 0) {
@@ -361,34 +363,30 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             }));
             await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
             
-            // Insert into kpi_detail and get back the generated IDs
-            const { data: insertedDetails, error: insError } = await supabase
-                .from("kpi_detail")
-                .insert(allDetails.map(({ _ftData, ...rest }) => rest))
-                .select("id, patient_id"); // Need ID to link kpi_ft_detail
+            // 批次寫入 kpi_detail & kpi_ft_detail 以並行方式確保 ID 正確連結
+            const CHUNK_SIZE = 50;
+            for (let i = 0; i < allDetails.length; i += CHUNK_SIZE) {
+                const batchDetails = allDetails.slice(i, i + CHUNK_SIZE);
+                const batchFt = allFtDetails.slice(i, i + CHUNK_SIZE);
 
-            if (insError) throw insError;
+                await Promise.all(batchDetails.map(async (detail: any, idx: number) => {
+                    const { _ftData, ...cleanDetail } = detail;
+                    const ftData = batchFt[idx];
 
-            // Link and insert into kpi_ft_detail
-            if (insertedDetails && insertedDetails.length > 0 && ftInf && ftInf.length > 0) {
-                const ftToInsert = [];
-                for (let i = 0; i < insertedDetails.length; i++) {
-                    const insObj = insertedDetails[i];
-                    const original = allDetails[i];
-                    if (original && original._ftData) {
-                        const ftRow: any = { kpi_detail_id: insObj.id };
-                        Object.keys(original._ftData).forEach(key => {
-                            if (key.startsWith('column')) {
-                                ftRow[key] = original._ftData[key];
-                            }
+                    const { data: inserted, error: insErr } = await supabase
+                        .from("kpi_detail")
+                        .insert(cleanDetail)
+                        .select("id")
+                        .single();
+
+                    if (!insErr && inserted && ftData && Object.keys(ftData).length > 0) {
+                        const ftRow: any = { kpi_detail_id: inserted.id };
+                        Object.keys(ftData).forEach(k => {
+                            if (k.startsWith('column')) ftRow[k] = ftData[k];
                         });
-                        ftToInsert.push(ftRow);
+                        await supabase.from("kpi_ft_detail").insert(ftRow);
                     }
-                }
-
-                if (ftToInsert.length > 0) {
-                    await supabase.from("kpi_ft_detail").insert(ftToInsert);
-                }
+                }));
             }
         }
 
