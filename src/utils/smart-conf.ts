@@ -15,6 +15,8 @@ export const SMART_CONFIG = {
     keyId: process.env.SMART_KEY_ID || "my-key-id",
     // Algorithm to sign the JWT (usually RS384 or ES384 for FHIR, but RS256 is common default)
     signingAlg: process.env.SMART_SIGNING_ALG || "RS384",
+    // PEM format public key (used for hosting JWKS to FHIR Server)
+    publicKey: process.env.SMART_PUBLIC_KEY || "",
 
     iss: process.env.SMART_ISS || "https://launch.smarthealthit.org/v/r4/fhir",
     scope: process.env.SMART_SCOPE || "launch user/Encounter.read user/Patient.read user/Practitioner.read openid profile",

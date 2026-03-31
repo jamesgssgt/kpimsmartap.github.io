@@ -3,6 +3,7 @@
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
+import { getBackendAccessToken } from "@/utils/backend-auth";
 
 // Fallback to local 172.16.7.78
 const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.7.78:8082/fhir";
@@ -13,9 +14,13 @@ const getStartDate = () => {
     return d.toISOString().split('T')[0];
 };
 
-async function fetchFhir(url: string) {
+async function fetchFhir(url: string, accessToken?: string | null) {
     try {
-        const res = await fetch(url, { headers: { "Accept": "application/json" } });
+        const headers: Record<string, string> = { "Accept": "application/json" };
+        if (accessToken) {
+            headers["Authorization"] = `Bearer ${accessToken}`;
+        }
+        const res = await fetch(url, { headers });
         if (!res.ok) throw new Error(`Status ${res.status}`);
         return await res.json();
     } catch (e) {
@@ -24,13 +29,18 @@ async function fetchFhir(url: string) {
     }
 }
 
-async function fetchFhirAll(url: string, maxItems = 20000) {
+async function fetchFhirAll(url: string, maxItems = 20000, accessToken?: string | null) {
     let results: any[] = [];
     let currentUrl = url;
     try {
+        const headers: Record<string, string> = { "Accept": "application/json" };
+        if (accessToken) {
+            headers["Authorization"] = `Bearer ${accessToken}`;
+        }
+
         while (currentUrl && results.length < maxItems) {
             console.log("Fetching FHIR page:", currentUrl);
-            const res = await fetch(currentUrl, { headers: { "Accept": "application/json" } });
+            const res = await fetch(currentUrl, { headers });
             if (!res.ok) throw new Error(`Status ${res.status}`);
             const bundle = await res.json();
             if (bundle && bundle.entry) {
@@ -51,7 +61,7 @@ async function fetchFhirAll(url: string, maxItems = 20000) {
     return results;
 }
 
-async function fetchByIds(baseUrl: string, resourceType: string, ids: string[]) {
+async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], accessToken?: string | null) {
     if (!ids.length) return [];
     const uniqueIds = Array.from(new Set(ids));
     const results = [];
@@ -60,7 +70,7 @@ async function fetchByIds(baseUrl: string, resourceType: string, ids: string[]) 
     for (let i = 0; i < uniqueIds.length; i += 50) {
         const chunk = uniqueIds.slice(i, i + 50);
         const idsStr = chunk.join(",");
-        const data = await fetchFhir(`${baseUrl}/${resourceType}?_id=${idsStr}&_count=100`);
+        const data = await fetchFhir(`${baseUrl}/${resourceType}?_id=${idsStr}&_count=100`, accessToken);
         if (data && data.entry) {
             results.push(...data.entry.map((e: any) => e.resource));
         }
@@ -143,6 +153,16 @@ export async function syncFhirData() {
         await supabase.from("KPI_Detail").delete().neq("id", -1);
         await supabase.from("KPI").delete().neq("id", -1);
 
+        // Fetch Backend Access Token before syncing
+        let accessToken: string | null = null;
+        try {
+            accessToken = await getBackendAccessToken(activeFhirUrl);
+        } catch (authErr) {
+            console.error("Backend Auth Failed: ", authErr);
+            // We'll proceed without token (maybe it's a completely open sandbox or tests),
+            // but log the error heavily.
+        }
+
         const allDetails: any[] = [];
         const allSummaryMap = new Map<string, any>();
 
@@ -180,7 +200,7 @@ export async function syncFhirData() {
             }
 
             // 由於只抓取我們自己的核心資料，5000 筆上限不會拖慢速度，且能獲得完整 KPI
-            let resources = await fetchFhirAll(url, 5000); 
+            let resources = await fetchFhirAll(url, 5000, accessToken); 
             if (!resources || resources.length === 0) continue;
 
             // Fetch Context (Patient, Encounter)
@@ -191,13 +211,9 @@ export async function syncFhirData() {
                 return null;
             }).filter((id: string) => !!id);
 
-            const patients = await fetchByIds(activeFhirUrl, "Patient", patIds);
-            const encounters = await fetchByIds(activeFhirUrl, "Encounter", encIds);
-            const practitioners = await fetchByIds(activeFhirUrl, "Practitioner", pracIds);
-
-            const patMap = new Map(patients.map((p: any) => [p.id, p]));
-            const encMap = new Map(encounters.map((e: any) => [e.id, e]));
-            const pracMap = new Map(practitioners.map((p: any) => [p.id, p]));
+            const patMap = new Map((await fetchByIds(activeFhirUrl, "Patient", patIds, accessToken)).map((p: any) => [p.id, p]));
+            const encMap = new Map((await fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken)).map((e: any) => [e.id, e]));
+            const pracMap = new Map((await fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken)).map((p: any) => [p.id, p]));
 
             // Apply Denominator Logic (Filter Base Resources)
             let denominatorSet = resources.filter((res: any) => {
