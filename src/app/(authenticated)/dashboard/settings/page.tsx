@@ -10,8 +10,9 @@ import { Switch } from "@/components/ui/switch";
 import { DataGenerator } from "@/components/DataGenerator";
 import { useSettings } from "@/contexts/SettingsContext";
 import { AiSettingsTable } from "@/components/settings/AiSettingsTable";
+import { Loader2 } from "lucide-react";
 
-import { syncFhirData } from "@/app/actions/sync-data";
+import { getSyncIndicators, getFhirRecordCount, syncFhirIndicatorBatch } from "@/app/actions/sync-data";
 import { saveSystemSetting, getSystemSettings } from "@/app/actions/system";
 import { SystemSetting } from "@/types/system";
 
@@ -19,27 +20,27 @@ export default function SettingsPage() {
     const [fhirUrl, setFhirUrl] = useState(SMART_CONFIG.iss);
     const [loading, setLoading] = useState(false);
     const [saved, setSaved] = useState(false);
+    
+    // Sync state
     const [syncing, setSyncing] = useState(false);
+    const [syncStep, setSyncStep] = useState<'idle' | 'preparing' | 'checking' | 'syncing' | 'completed' | 'error'>('idle');
+    const [syncProgress, setSyncProgress] = useState({ current: 0, total: 0 });
+    const [syncStatus, setSyncStatus] = useState("");
+    const [syncLogs, setSyncLogs] = useState<string[]>([]);
+
     const { enableAi, setEnableAi, enableFavorites, setEnableFavorites } = useSettings();
 
-    // Load from LocalStorage on mount
-    // Load from DB or LocalStorage on mount
     useEffect(() => {
         const loadSettings = async () => {
-            // Try DB first
-            const res = await getSystemSettings(2); // Type 2 = General
+            const res = await getSystemSettings(2);
             const dbFhir = res.success ? res.data?.find(d => d.SysCode === 'FHIR_SERVER') : null;
 
             if (dbFhir && dbFhir.SysValue) {
                 setFhirUrl(dbFhir.SysValue);
-                // Sync local
                 localStorage.setItem("KPIM_FHIR_URL", dbFhir.SysValue);
             } else {
-                // Fallback to local
                 const stored = localStorage.getItem("KPIM_FHIR_URL");
-                if (stored) {
-                    setFhirUrl(stored);
-                }
+                if (stored) setFhirUrl(stored);
             }
         };
         loadSettings();
@@ -47,11 +48,7 @@ export default function SettingsPage() {
 
     const handleSave = async () => {
         setLoading(true);
-        // Save to LocalStorage (client-side backup/cache)
         localStorage.setItem("KPIM_FHIR_URL", fhirUrl);
-
-        // Save to System Table (Server-side source of truth)
-        // We use SysCode: 'FHIR_SERVER', SysType: 2 (General Config)
         const sysSetting: SystemSetting = {
             SysCode: 'FHIR_SERVER',
             SysName: 'Default FHIR Server',
@@ -59,7 +56,6 @@ export default function SettingsPage() {
             SysValue: fhirUrl
         };
         const res = await saveSystemSetting(sysSetting);
-
         setLoading(false);
         if (res.success) {
             setSaved(true);
@@ -69,17 +65,67 @@ export default function SettingsPage() {
         }
     };
 
+    const addLog = (msg: string) => {
+        setSyncLogs(prev => [`[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] ${msg}`, ...prev]);
+    };
+
     const handleSync = async () => {
         setSyncing(true);
+        setSyncStep('preparing');
+        setSyncLogs([]);
+        setSyncStatus("正在取得指標清單...");
+        addLog("開始同步流程...");
+
         try {
-            const res = await syncFhirData();
-            if (res.success) {
-                alert(res.message);
-            } else {
-                alert("同步失敗: " + res.message);
+            // Phase 1: Get Indicators
+            const metaRes = await getSyncIndicators();
+            if (!metaRes.success || !metaRes.data) {
+                throw new Error(metaRes.message || "取得指標清單失敗");
             }
-        } catch (e) {
-            alert("同步發生錯誤");
+            const indicators = metaRes.data;
+            addLog(`已取得 ${indicators.length} 個指標定義。`);
+
+            // Phase 2: Check Counts
+            setSyncStep('checking');
+            setSyncProgress({ current: 0, total: indicators.length });
+            const indicatorCounts: Record<string, number> = {};
+            
+            for (let i = 0; i < indicators.length; i++) {
+                const name = indicators[i];
+                setSyncStatus(`正在確認筆數: ${name} (${i + 1}/${indicators.length})`);
+                setSyncProgress({ current: i + 1, total: indicators.length });
+                
+                const countRes = await getFhirRecordCount(name);
+                if (countRes.success) {
+                    indicatorCounts[name] = countRes.count || 0;
+                    addLog(`指標「${name}」預計同步 ${countRes.count || 0} 筆數據 (${countRes.resourceType})`);
+                }
+            }
+
+            // Phase 3: Sync Batches
+            setSyncStep('syncing');
+            setSyncProgress({ current: 0, total: indicators.length });
+            for (let i = 0; i < indicators.length; i++) {
+                const name = indicators[i];
+                setSyncStatus(`正在同步: ${name} (${i + 1}/${indicators.length})`);
+                setSyncProgress({ current: i + 1, total: indicators.length });
+                addLog(`正在執行「${name}」同步計算...`);
+
+                const res = await syncFhirIndicatorBatch(name);
+                if (res.success) {
+                    addLog(`指標「${name}」同步成功: ${res.message}`);
+                } else {
+                    addLog(`❌ 指標「${name}」同步失敗: ${res.message}`);
+                }
+            }
+
+            setSyncStep('completed');
+            setSyncStatus("同步作業全數完成！");
+            addLog("🎉 同步流程結束。");
+        } catch (e: any) {
+            setSyncStep('error');
+            setSyncStatus("同步發生錯誤");
+            addLog(`❌ 錯誤: ${e.message}`);
         } finally {
             setSyncing(false);
         }
@@ -89,98 +135,123 @@ export default function SettingsPage() {
         <div className="space-y-6 p-6 md:p-12">
             <h2 className="text-3xl font-bold tracking-tight">設定</h2>
 
-            <Card>
-                <CardHeader>
-                    <CardTitle>AI 智慧建議功能</CardTitle>
-                    <CardDescription>
-                        控制是否啟用系統中的前端 AI 輔助功能 (如：指標建議、代碼生成)。此開關不影響後端模型配置。
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="ai-mode" className="flex flex-col space-y-1">
-                            <span>啟用前端 AI 輔助</span>
-                            <span className="font-normal text-[0.8rem] text-muted-foreground">
-                                若關閉，相關 UI 按鈕將被隱藏。
-                            </span>
-                        </Label>
-                        <Switch id="ai-mode" checked={enableAi} onCheckedChange={setEnableAi} />
-                    </div>
-                </CardContent>
-            </Card>
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>擴充功能設定</CardTitle>
-                    <CardDescription>
-                        調整儀表板的額外功能顯示。
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="flex items-center justify-between space-x-2">
-                        <Label htmlFor="fav-mode" className="flex flex-col space-y-1">
-                            <span>啟用「我的最愛」功能</span>
-                            <span className="font-normal text-[0.8rem] text-muted-foreground">
-                                若開啟，側邊欄將顯示我的最愛捷徑。
-                            </span>
-                        </Label>
-                        <Switch id="fav-mode" checked={enableFavorites} onCheckedChange={setEnableFavorites} />
-                    </div>
-                </CardContent>
-            </Card>
-
-            <AiSettingsTable />
-
-            <Card>
-                <CardHeader>
-                    <CardTitle>FHIR 伺服器設定</CardTitle>
-                    <CardDescription>
-                        設定 FHIR 伺服器的連線資訊。
-                    </CardDescription>
-                </CardHeader>
-                <CardContent className="space-y-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="fhir-url">FHIR 伺服器網址</Label>
-                        <Input
-                            id="fhir-url"
-                            placeholder="https://hapi.fhir.org/baseR4"
-                            value={fhirUrl}
-                            onChange={(e) => setFhirUrl(e.target.value)}
-                        />
-                        <p className="text-[0.8rem] text-muted-foreground">
-                            欲連接的 FHIR 伺服器基礎網址 (Base URL)。
-                        </p>
-                    </div>
-                    <Button onClick={handleSave} disabled={loading}>
-                        {loading ? "儲存中..." : saved ? "已儲存！" : "儲存設定"}
-                    </Button>
-                </CardContent>
-            </Card>
-
+            {/* AI and Extension Settings */}
             <div className="grid gap-6 md:grid-cols-2">
                 <Card>
                     <CardHeader>
-                        <CardTitle>資料管理</CardTitle>
-                        <CardDescription>
-                            生成演示用的測試資料。
-                        </CardDescription>
+                        <CardTitle>AI 智慧建議功能</CardTitle>
+                        <CardDescription>控制是否啟用前端 AI 輔助功能。</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <DataGenerator />
+                        <div className="flex items-center justify-between space-x-2">
+                            <Label htmlFor="ai-mode" className="flex flex-col space-y-1">
+                                <span>啟用前端 AI 輔助</span>
+                                <span className="text-xs text-muted-foreground">若關閉，相關 UI 按鈕將被隱藏。</span>
+                            </Label>
+                            <Switch id="ai-mode" checked={enableAi} onCheckedChange={setEnableAi} />
+                        </div>
                     </CardContent>
                 </Card>
 
                 <Card>
                     <CardHeader>
-                        <CardTitle>FHIR 同步與計算</CardTitle>
-                        <CardDescription>
-                            手動觸發 FHIR 同步並依定義計算指標。
-                        </CardDescription>
+                        <CardTitle>擴充功能設定</CardTitle>
+                        <CardDescription>調整儀表板的額外功能顯示。</CardDescription>
                     </CardHeader>
                     <CardContent>
-                        <Button variant="outline" onClick={handleSync} disabled={syncing}>
-                            {syncing ? "處理中..." : "同步與計算指標"}
-                        </Button>
+                        <div className="flex items-center justify-between space-x-2">
+                            <Label htmlFor="fav-mode" className="flex flex-col space-y-1">
+                                <span>啟用「我的最愛」功能</span>
+                                <span className="text-xs text-muted-foreground">若開啟，側邊欄將顯示捷徑。</span>
+                            </Label>
+                            <Switch id="fav-mode" checked={enableFavorites} onCheckedChange={setEnableFavorites} />
+                        </div>
+                    </CardContent>
+                </Card>
+            </div>
+
+            <AiSettingsTable />
+
+            {/* FHIR Server Settings */}
+            <Card>
+                <CardHeader>
+                    <CardTitle>FHIR 伺服器設定</CardTitle>
+                    <CardDescription>設定 FHIR 伺服器的連線資訊。</CardDescription>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                    <div className="space-y-2">
+                        <Label htmlFor="fhir-url">FHIR 伺服器網址</Label>
+                        <Input id="fhir-url" value={fhirUrl} onChange={(e) => setFhirUrl(e.target.value)} />
+                    </div>
+                    <Button onClick={handleSave} disabled={loading}>{loading ? "儲存中..." : saved ? "已儲存！" : "儲存設定"}</Button>
+                </CardContent>
+            </Card>
+
+            {/* Data Management Section */}
+            <div className="grid gap-6 md:grid-cols-2">
+                <Card>
+                    <CardHeader>
+                        <CardTitle>資料生成器</CardTitle>
+                        <CardDescription>生成演示用的測試資料到 FHIR Server。</CardDescription>
+                    </CardHeader>
+                    <CardContent><DataGenerator /></CardContent>
+                </Card>
+
+                <Card className={syncing ? "border-primary shadow-md transition-all" : ""}>
+                    <CardHeader>
+                        <CardTitle>分階段同步與計算</CardTitle>
+                        <CardDescription>按指標分批同步 FHIR 資料，避免超時並顯示即時進度。</CardDescription>
+                    </CardHeader>
+                    <CardContent className="space-y-4">
+                        {!syncing && syncStep === 'idle' && (
+                            <Button variant="outline" onClick={handleSync} className="w-full">
+                                開始同步流程
+                            </Button>
+                        )}
+
+                        {(syncing || syncStep !== 'idle') && (
+                            <div className="space-y-4">
+                                <div className="space-y-2">
+                                    <div className="flex justify-between text-sm font-medium">
+                                        <span className="flex items-center gap-2">
+                                            {syncing && <Loader2 className="h-4 w-4 animate-spin text-primary" />}
+                                            {syncStatus}
+                                        </span>
+                                        {syncProgress.total > 0 && (
+                                            <span>{syncProgress.current} / {syncProgress.total}</span>
+                                        )}
+                                    </div>
+                                    
+                                    {/* Custom Progress Bar */}
+                                    <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
+                                        <div 
+                                            className="h-full bg-primary transition-all duration-500 ease-in-out"
+                                            style={{ width: `${syncProgress.total > 0 ? (syncProgress.current / syncProgress.total) * 100 : 0}%` }}
+                                        />
+                                    </div>
+                                </div>
+
+                                {/* Mini Logs */}
+                                <div className="bg-muted/30 rounded-md p-3 h-40 overflow-y-auto text-[0.75rem] font-mono space-y-1 border">
+                                    {syncLogs.map((log, idx) => (
+                                        <div key={idx} className={log.includes('❌') ? 'text-destructive' : log.includes('🎉') ? 'text-emerald-600 font-bold' : 'text-muted-foreground'}>
+                                            {log}
+                                        </div>
+                                    ))}
+                                </div>
+
+                                {syncStep === 'completed' && (
+                                    <Button variant="outline" onClick={() => setSyncStep('idle')} className="w-full">
+                                        完成
+                                    </Button>
+                                )}
+                                {syncStep === 'error' && (
+                                    <Button variant="destructive" onClick={handleSync} className="w-full">
+                                        重試
+                                    </Button>
+                                )}
+                            </div>
+                        )}
                     </CardContent>
                 </Card>
             </div>

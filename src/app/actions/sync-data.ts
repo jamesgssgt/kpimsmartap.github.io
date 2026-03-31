@@ -1,5 +1,3 @@
-
-
 "use server";
 
 import { createClient } from "@/utils/supabase/server";
@@ -25,7 +23,7 @@ async function fetchFhir(url: string, accessToken?: string | null) {
         return await res.json();
     } catch (e) {
         console.error("FHIR Fetch Error:", e);
-        return null; // Return null on error so we can handle it
+        return null; 
     }
 }
 
@@ -47,7 +45,6 @@ async function fetchFhirAll(url: string, maxItems = 20000, accessToken?: string 
                 results.push(...bundle.entry.map((e: any) => e.resource));
             }
             
-            // Find next link
             const nextLink = bundle.link?.find((l: any) => l.relation === "next");
             if (nextLink && nextLink.url) {
                 currentUrl = nextLink.url;
@@ -66,7 +63,6 @@ async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], 
     const uniqueIds = Array.from(new Set(ids));
     const results = [];
 
-    // Chunk by 50
     for (let i = 0; i < uniqueIds.length; i += 50) {
         const chunk = uniqueIds.slice(i, i + 50);
         const idsStr = chunk.join(",");
@@ -78,7 +74,6 @@ async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], 
     return results;
 }
 
-// Helper to get nested value
 function getValueByPath(obj: any, path: string) {
     if (!path) return undefined;
     const parts = path.split('.');
@@ -86,11 +81,6 @@ function getValueByPath(obj: any, path: string) {
     for (const part of parts) {
         if (current === undefined || current === null) return undefined;
         if (Array.isArray(current)) {
-            // If array, we usually want to check if ANY item matches, but for simple path retrieval, 
-            // we might just map? Or return the first?
-            // FHIR paths often imply "any in collection". 
-            // For simplicity, let's return the first match or array if it's the leaf.
-            // If traversing through array (e.g. identifier.value), we map.
             current = current.map(c => c[part]).flat();
         } else {
             current = current[part];
@@ -99,12 +89,10 @@ function getValueByPath(obj: any, path: string) {
     return current;
 }
 
-// Generic Filter Evaluator
 function evaluateCondition(resource: any, condition: any): boolean {
     const { path, operator, value } = condition;
     const actualValue = getValueByPath(resource, path);
 
-    // Normalize for comparison
     const check = (val: any) => {
         if (val === undefined || val === null) return false;
         const strVal = String(val);
@@ -115,7 +103,7 @@ function evaluateCondition(resource: any, condition: any): boolean {
             case 'contains': return strVal.includes(strTarget);
             case 'greaterThan': return parseFloat(strVal) > parseFloat(strTarget);
             case 'lessThan': return parseFloat(strVal) < parseFloat(strTarget);
-            case 'exists': return true; // Value exists
+            case 'exists': return true;
             default: return strVal == strTarget;
         }
     };
@@ -126,186 +114,160 @@ function evaluateCondition(resource: any, condition: any): boolean {
     return check(actualValue);
 }
 
-export async function syncFhirData() {
+// Phase 1: Get list of indicators
+export async function getSyncIndicators() {
+    try {
+        const supabase = await createClient();
+        const { data, error } = await supabase.from("kpi_definitions").select("name").order("name");
+        if (error) throw error;
+        return { success: true, data: data.map(d => d.name) };
+    } catch (e: any) {
+        return { success: false, message: e.message };
+    }
+}
+
+// Phase 2: Check record count for an indicator
+export async function getFhirRecordCount(indicatorName: string) {
+    try {
+        const supabase = await createClient();
+        const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
+        const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
+        
+        const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
+        if (!kpi) throw new Error(`Indicator ${indicatorName} not found`);
+
+        const { data: dls } = await supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).eq("kpi_dl_type", 1).order('seq', { ascending: true });
+        if (!dls || dls.length === 0) return { success: true, count: 0 };
+
+        let baseResource = dls[0].kpi_id_fhir_resource;
+        if (!baseResource) {
+            if (indicatorName.includes("手術") || indicatorName.includes("抗生素")) baseResource = "Procedure";
+            else if (indicatorName.includes("急診") || indicatorName.includes("住院")) baseResource = "Encounter";
+            else return { success: true, count: 0 };
+        }
+
+        const START_DATE = getStartDate();
+        let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_summary=count`;
+        if (['Procedure', 'Encounter'].includes(baseResource)) {
+            url += `&date=ge${START_DATE}`;
+        }
+
+        // We don't need backend auth for summary=count on most sandboxes, but let's be safe
+        let accessToken = null;
+        try { accessToken = await getBackendAccessToken(activeFhirUrl); } catch (e) {}
+
+        const res = await fetchFhir(url, accessToken);
+        return { success: true, count: res?.total || 0, resourceType: baseResource };
+    } catch (e: any) {
+        return { success: false, message: e.message };
+    }
+}
+
+// Phase 3: Sync a single indicator batch
+export async function syncFhirIndicatorBatch(indicatorName: string) {
     try {
         const supabase = await createClient();
         const START_DATE = getStartDate();
 
-        // 0. Get FHIR URL from System Table
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
-        const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL; // Fallback to hardcoded if missing
+        const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
 
-        // 1. Fetch KPI Definitions & Logic
-        const { data: kpiDefs, error: defError } = await supabase.from("kpi_definitions").select("*");
-        if (defError) throw defError;
+        const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
+        if (!kpi) throw new Error("Indicator not found");
 
-        const { data: kpiDlls, error: dlError } = await supabase.from("kpi_dl").select("*").order('seq', { ascending: true });
-        if (dlError) throw dlError;
+        const { data: kpiDlls } = await supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).order('seq', { ascending: true });
+        
+        // 僅清除該指標舊資料 (不全域重置)
+        await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
+        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
 
-        const dlMap = new Map<string, any[]>(); // kpiid -> dl[]
-        kpiDlls?.forEach(dl => {
-            if (!dlMap.has(dl.kpiid)) dlMap.set(dl.kpiid, []);
-            dlMap.get(dl.kpiid)?.push(dl);
-        });
+        let accessToken = null;
+        try { accessToken = await getBackendAccessToken(activeFhirUrl); } catch (e) {}
 
-        // Clear existing details? Or just new sync?
-        // User behavior implies "Refresh".
-        await supabase.from("KPI_Detail").delete().neq("id", -1);
-        await supabase.from("KPI").delete().neq("id", -1);
+        const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
+        const nums = kpiDlls?.filter(d => d.kpi_dl_type === 2) || [];
+        if (denoms.length === 0) return { success: true, message: "無任何分母定義，跳過。" };
 
-        // Fetch Backend Access Token before syncing
-        let accessToken: string | null = null;
-        try {
-            accessToken = await getBackendAccessToken(activeFhirUrl);
-        } catch (authErr) {
-            console.error("Backend Auth Failed: ", authErr);
-            // We'll proceed without token (maybe it's a completely open sandbox or tests),
-            // but log the error heavily.
+        let baseResource = denoms[0].kpi_id_fhir_resource;
+        if (!baseResource) {
+            if (indicatorName.includes("手術") || indicatorName.includes("抗生素")) baseResource = "Procedure";
+            else if (indicatorName.includes("急診") || indicatorName.includes("住院")) baseResource = "Encounter";
+            else throw new Error("無法判斷基礎資源類型");
         }
+
+        let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=200`;
+        if (['Procedure', 'Encounter'].includes(baseResource)) {
+            url += `&date=ge${START_DATE}`;
+        }
+
+        let resources = await fetchFhirAll(url, 200, accessToken); 
+        if (!resources || resources.length === 0) return { success: true, message: "無符合資料。" };
+
+        const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
+        const encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id);
+        const pracIds = resources.map((r: any) => {
+            if (r.performer?.[0]?.actor?.reference) return r.performer[0].actor.reference.split(/[:\/]/).pop();
+            return null;
+        }).filter((id: string) => !!id);
+
+        const [patData, encData, pracData] = await Promise.all([
+            fetchByIds(activeFhirUrl, "Patient", patIds, accessToken),
+            fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken),
+            fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken)
+        ]);
+
+        const patMap = new Map(patData.map((p: any) => [p.id, p]));
+        const encMap = new Map(encData.map((e: any) => [e.id, e]));
+        const pracMap = new Map(pracData.map((p: any) => [p.id, p]));
+
+        let denominatorSet = resources.filter((res: any) => {
+            for (const step of denoms) {
+                if (step.source_type === 1) {
+                    const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
+                    if (!evaluateCondition(res, condition)) return false;
+                }
+            }
+            return true;
+        });
 
         const allDetails: any[] = [];
         const allSummaryMap = new Map<string, any>();
 
-        for (const kpi of kpiDefs || []) {
-            const dls = dlMap.get(kpi.kpiid) || [];
+        for (const res of denominatorSet) {
+            const patId = res.subject?.reference?.split('/').pop();
+            const encId = res.encounter?.reference?.split('/').pop();
+            const patient: any = patMap.get(patId);
+            const encounter: any = encMap.get(encId);
+            if (!patient) continue;
 
-            // Separate Logic
-            const denoms = dls.filter(d => d.kpi_dl_type === 1);
-            const nums = dls.filter(d => d.kpi_dl_type === 2);
-            // exclusions...
+            let isNumerator = false;
+            let abnormalReason = null;
+            const isMortality = indicatorName.includes("死亡率");
+            const isAntibiotic = indicatorName.includes("抗生素");
 
-            if (denoms.length === 0) continue;
-
-            // Determine Main Resource Type from First Denominator Step
-            let baseResource = denoms[0].kpi_id_fhir_resource;
-            
-            // Fallback heuristics if the resource type wasn't explicitly mapped in the DB 
-            if (!baseResource) {
-                if (kpi.name.includes("手術") || kpi.name.includes("抗生素") || kpi.name.includes("給予比率")) {
-                    baseResource = "Procedure";
-                } else if (kpi.name.includes("急診") || kpi.name.includes("住院")) {
-                    baseResource = "Encounter";
-                } else {
-                    continue; // Unresolvable
-                }
-            }
-
-            // Fetch Base Resources
-            // Fetch Base Resources
-            // 由於 Sandbox 上有數百萬筆其他人產生的 Synthea 假資料會干擾科別顯示 (UUID)
-            // 這裡我們強制過濾出我們自己生成的資料 (使用 kpim_test_data 標籤)
-            // 為了避免 Vercel 15秒 的 Serverless Timeout，限制只抓最新的 200 筆測試資料
-            let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=200`;
-            // Add date filter if applicable (Procedure, Encounter)
-            if (['Procedure', 'Encounter'].includes(baseResource)) {
-                url += `&date=ge${START_DATE}`;
-            }
-
-            // 由於只抓取我們自己的核心資料，且限制在 200 筆，可避免 Vercel 504 Timeout
-            let resources = await fetchFhirAll(url, 200, accessToken); 
-            if (!resources || resources.length === 0) continue;
-
-            // Fetch Context (Patient, Encounter)
-            const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
-            const encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id); // Procedure/Obs often have encounter
-            const pracIds = resources.map((r: any) => {
-                if (r.performer?.[0]?.actor?.reference) return r.performer[0].actor.reference.split(/[:\/]/).pop();
-                return null;
-            }).filter((id: string) => !!id);
-
-            // 並行發送 API 請求以大幅縮短執行時間，防止 Timeout
-            const [patData, encData, pracData] = await Promise.all([
-                fetchByIds(activeFhirUrl, "Patient", patIds, accessToken),
-                fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken),
-                fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken)
-            ]);
-
-            const patMap = new Map(patData.map((p: any) => [p.id, p]));
-            const encMap = new Map(encData.map((e: any) => [e.id, e]));
-            const pracMap = new Map(pracData.map((p: any) => [p.id, p]));
-
-            // Apply Denominator Logic (Filter Base Resources)
-            let denominatorSet = resources.filter((res: any) => {
-                // Apply all Denom Steps (AND logic)
-                for (const step of denoms) {
-                    if (step.source_type === 1) { // FHIR Filter
-                        const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
-                        if (!evaluateCondition(res, condition)) return false;
-                    }
-                }
-                return true;
-            });
-
-            // Special Handling (Hardcoded fallback for complex logic if Name matches)
-            // If generic logic is insufficient, we might inject custom logic results here.
-            // But let's try to stick to generic first.
-            // "Discharge Condition" logic is hard to model with simple 'equals' on path? 
-            // actually: hospitalization.dischargeDisposition.coding.code equals 'dead'
-
-            // Process Items
-            for (const res of denominatorSet) {
-                const patId = res.subject?.reference?.split('/').pop();
-                const encId = res.encounter?.reference?.split('/').pop();
-                const patient: any = patMap.get(patId);
-                const encounter: any = encMap.get(encId);
-
-                if (!patient) continue; // Must have patient
-
-                // Determine Numerator Status
-                let isNumerator = false;
-                let abnormalReason = null;
-
-                // Special Logic for known KPI Names (Legacy Support / Complex Logic)
-                // If it is "術後48小時死亡率" or matches ID, we use the complex logic?
-                // The user asked to use "kpi_definitions".
-                // If the definition in DB is "SIMPLE", we use simple. 
-                // We assume the DB definitions *approximate* the logic or the user will refine them.
-                // However, the "Antibiotic time diff" logic is NOT in the DB structure I saw in `save-indicator`.
-                // So the Generic Engine will FAIL to calculate "Antibiotic" correctly (it will likely be 0/0 or 100/100).
-                // Let's keep the HARDCODED logic for the specific NAMES as "Overrides".
-
-                const isMortality = kpi.name.includes("死亡率");
-                const isAntibiotic = kpi.name.includes("抗生素");
-
-                if (isMortality) {
-                    // Re-implement Mortality Check (48hr)
-                    const opEndStr = res.performedPeriod?.end;
-                    if (opEndStr && patient.deceasedDateTime) {
-                        const deathTime = new Date(patient.deceasedDateTime);
-                        const opEnd = new Date(opEndStr);
-                        const diffHours = (deathTime.getTime() - opEnd.getTime()) / (1000 * 60 * 60);
-                        if (diffHours > 0 && diffHours <= 48) {
-                            isNumerator = true;
-                            abnormalReason = "術後48小時內死亡";
-                        }
-                    }
-                    // Also Discharge disposition...
-                    if (!isNumerator && encounter?.hospitalization?.dischargeDisposition?.coding) {
-                        const dispCode = encounter.hospitalization.dischargeDisposition.coding[0]?.code;
-                        if (['aadvice', 'exp'].includes(dispCode)) isNumerator = true;
-                    }
-                } else if (isAntibiotic) {
-                    // Check if res.note exists and has our injected semantic string
-                    const hasGiven = res.note?.some((n: any) => n.text === "Antibiotic given: true");
-                    const hasNotGiven = res.note?.some((n: any) => n.text === "Antibiotic given: false");
-                    
-                    if (hasGiven) {
+            if (isMortality) {
+                const opEndStr = res.performedPeriod?.end;
+                if (opEndStr && patient.deceasedDateTime) {
+                    const deathTime = new Date(patient.deceasedDateTime);
+                    const opEnd = new Date(opEndStr);
+                    const diffHours = (deathTime.getTime() - opEnd.getTime()) / (1000 * 60 * 60);
+                    if (diffHours > 0 && diffHours <= 48) {
                         isNumerator = true;
-                    } else if (hasNotGiven) {
-                        isNumerator = false;
-                        abnormalReason = "未在劃刀前1小時內給藥";
-                    } else {
-                        // fallback to default DL generic logic
-                        nums.forEach(step => {
-                            const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
-                            if (evaluateCondition(res, condition)) {
-                                isNumerator = true;
-                                abnormalReason = step.kpi_dl_notes || "符合分子條件";
-                            }
-                        });
+                        abnormalReason = "術後48小時內死亡";
                     }
+                }
+                if (!isNumerator && encounter?.hospitalization?.dischargeDisposition?.coding) {
+                    const dispCode = encounter.hospitalization.dischargeDisposition.coding[0]?.code;
+                    if (['aadvice', 'exp'].includes(dispCode)) isNumerator = true;
+                }
+            } else if (isAntibiotic) {
+                const hasGiven = res.note?.some((n: any) => n.text === "Antibiotic given: true");
+                const hasNotGiven = res.note?.some((n: any) => n.text === "Antibiotic given: false");
+                if (hasGiven) isNumerator = true;
+                else if (hasNotGiven) {
+                    isNumerator = false;
+                    abnormalReason = "未在劃刀前1小時內給藥";
                 } else {
-                    // Generic Numerator Check
                     nums.forEach(step => {
                         const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
                         if (evaluateCondition(res, condition)) {
@@ -314,117 +276,93 @@ export async function syncFhirData() {
                         }
                     });
                 }
-
-                // Prepare Detail Record
-                let deptName = "一般外科";
-                if (encounter?.serviceProvider?.display) {
-                    deptName = encounter.serviceProvider.display;
-                } else if (encounter?.serviceProvider?.reference) {
-                    deptName = encounter.serviceProvider.reference.split('/').pop() || "一般外科";
-                }
-
-                let doctorName = "王大明";
-                let doctorId = "H85585021721";
-                if (res.performer && res.performer.length > 0 && res.performer[0].actor?.reference) {
-                    const refId = res.performer[0].actor.reference.split(/[:\/]/).pop();
-                    doctorId = refId || doctorId;
-                    const prac = pracMap.get(refId);
-                    if (prac?.name?.[0]?.text) {
-                        doctorName = prac.name[0].text;
-                    } else {
-                        doctorName = refId || doctorName;
+            } else {
+                nums.forEach(step => {
+                    const condition = JSON.parse(step.kpi_dl_condition_value || '{}');
+                    if (evaluateCondition(res, condition)) {
+                        isNumerator = true;
+                        abnormalReason = step.kpi_dl_notes || "符合分子條件";
                     }
-                } else if (encounter?.participant && encounter.participant.length > 0 && encounter.participant[0].individual?.reference) {
-                    const refId = encounter.participant[0].individual.reference.split(/[:\/]/).pop();
-                    doctorId = refId || doctorId;
-                    const prac = pracMap.get(refId);
-                    if (prac?.name?.[0]?.text) {
-                        doctorName = prac.name[0].text;
-                    } else {
-                        doctorName = refId || doctorName;
-                    }
-                }
-                
-                // If it's the demo doc ID, make it pretty
-                if (doctorId === "dr-smart-demo") {
-                    doctorName = "林智明 (示範登入)";
-                }
-                // Dates
-                const reportDate = res.performedPeriod?.end || res.effectiveDateTime || new Date().toISOString();
-
-                const isPositiveKPI = kpi.name.includes("給予比率") || kpi.name.includes("達成率");
-                let status = "正常";
-                if (isPositiveKPI) {
-                    status = isNumerator ? "正常" : "異常";
-                } else {
-                    status = isNumerator ? "異常" : "正常";
-                }
-
-                allDetails.push({
-                    department: deptName,
-                    doctor: doctorName,
-                    indicator_name: kpi.name,
-                    indicator_def: kpi.formula || '',
-                    patient_id: patId,
-                    patient_gender: patient?.gender,
-                    patient_birthday: patient?.birthDate,
-                    patient_age: patient?.birthDate ? new Date().getFullYear() - new Date(patient.birthDate).getFullYear() : 0,
-                    status: status,
-                    value: isNumerator ? 1 : 0,
-                    numerator: isNumerator ? 1 : 0,
-                    denominator: 1,
-                    unit: "%",
-                    report_date: reportDate,
-                    admission_date: encounter?.period?.start,
-                    discharge_date: encounter?.period?.end,
-                    abnormal_reason: abnormalReason,
-                    hospital_name: "市立聯合醫院",
-                    doctor_id: doctorId
                 });
-
-                // Aggregate
-                const key = `${deptName}|${doctorName}|${kpi.name}`;
-                if (!allSummaryMap.has(key)) {
-                    allSummaryMap.set(key, {
-                        department: deptName,
-                        doctor: doctorName, // Use Name
-                        indicator_name: kpi.name,
-                        indicator_def: kpi.formula,
-                        numerator: 0,
-                        denominator: 0,
-                        unit: "%",
-                        hospital_name: "市立聯合醫院",
-                        doctor_id: doctorId
-                    });
-                }
-                const sum = allSummaryMap.get(key);
-                sum.numerator += (isNumerator ? 1 : 0);
-                sum.denominator += 1;
             }
+
+            let deptName = "一般外科";
+            if (encounter?.serviceProvider?.display) deptName = encounter.serviceProvider.display;
+            else if (encounter?.serviceProvider?.reference) deptName = encounter.serviceProvider.reference.split('/').pop() || "一般外科";
+
+            let doctorName = "王大明";
+            let doctorId = "H85585021721";
+            if (res.performer?.[0]?.actor?.reference) {
+                const refId = res.performer[0].actor.reference.split(/[:\/]/).pop();
+                doctorId = refId || doctorId;
+                const prac = pracMap.get(refId);
+                doctorName = prac?.name?.[0]?.text || refId || doctorName;
+            }
+
+            const reportDate = res.performedPeriod?.end || res.effectiveDateTime || new Date().toISOString();
+            const isPositiveKPI = indicatorName.includes("給予比率") || indicatorName.includes("達成率");
+            let status = isPositiveKPI ? (isNumerator ? "正常" : "異常") : (isNumerator ? "異常" : "正常");
+
+            const detail = {
+                department: deptName,
+                doctor: doctorName,
+                indicator_name: indicatorName,
+                indicator_def: kpi.formula || '',
+                patient_id: patId,
+                patient_gender: patient?.gender,
+                patient_birthday: patient?.birthDate,
+                patient_age: patient?.birthDate ? new Date().getFullYear() - new Date(patient.birthDate).getFullYear() : 0,
+                status: status,
+                value: isNumerator ? 1 : 0,
+                numerator: isNumerator ? 1 : 0,
+                denominator: 1,
+                unit: "%",
+                report_date: reportDate,
+                abnormal_reason: abnormalReason,
+                hospital_name: "市立聯合醫院",
+                doctor_id: doctorId
+            };
+            allDetails.push(detail);
+
+            const key = `${deptName}|${doctorName}|${indicatorName}`;
+            if (!allSummaryMap.has(key)) {
+                allSummaryMap.set(key, {
+                    department: deptName, doctor: doctorName, indicator_name: indicatorName,
+                    indicator_def: kpi.formula, numerator: 0, denominator: 0, unit: "%",
+                    hospital_name: "市立聯合醫院", doctor_id: doctorId
+                });
+            }
+            const sum = allSummaryMap.get(key);
+            sum.numerator += (isNumerator ? 1 : 0);
+            sum.denominator += 1;
         }
 
-        if (allDetails.length === 0) {
-            return { success: true, message: "同步完成，但無資料 (檢查 KPI 設定)。" };
+        if (allDetails.length > 0) {
+            const kpiSummaryList = Array.from(allSummaryMap.values()).map(item => ({
+                ...item,
+                value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
+            }));
+            await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
+            await supabase.from("KPI_Detail").insert(allDetails);
         }
 
-        // Convert Map to List
-        const kpiSummaryList = Array.from(allSummaryMap.values()).map(item => ({
-            ...item,
-            value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
-        }));
-
-        // Insert Results
-        const { error: kpiError } = await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
-        if (kpiError) throw kpiError;
-
-        const { error: detailError } = await supabase.from("KPI_Detail").insert(allDetails);
-        if (detailError) throw detailError;
-
-        return { success: true, message: `DB 同步完成: ${allDetails.length} 筆明細，${kpiSummaryList.length} 筆匯總` };
-
+        return { success: true, message: `已完成: ${allDetails.length} 筆資料` };
     } catch (e: any) {
-        console.error("Sync Error Full Object:", JSON.stringify(e, null, 2));
-        const msg = e.message || JSON.stringify(e);
-        return { success: false, message: "同步失敗: " + msg };
+        return { success: false, message: e.message };
     }
+}
+
+// Legacy wrapper (optional, but keep for fallback)
+export async function syncFhirData() {
+    const { data: indicators } = await getSyncIndicators();
+    if (!indicators) return { success: false, message: "無法取得指標內容" };
+    
+    // Clear only if needed, but per the updated logic, we now do it per indicator.
+    // For legacy single call, we might want to clear all? 
+    // Actually, user said skip global reset.
+    
+    for (const name of indicators) {
+        await syncFhirIndicatorBatch(name);
+    }
+    return { success: true, message: "同步作業已全數完成 (批次處理)" };
 }
