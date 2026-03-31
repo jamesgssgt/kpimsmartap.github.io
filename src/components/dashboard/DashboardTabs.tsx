@@ -15,6 +15,9 @@ export function DashboardTabs({ pinnedIndicators, currentIndicator }: DashboardT
     const handleTabClick = (indicatorName: string) => {
         const params = new URLSearchParams(searchParams.toString());
         params.set('kpi', indicatorName);
+        // 重置科別與醫師篩選，回到總覽架構
+        params.delete('dept');
+        params.delete('doctor');
         router.push(`?${params.toString()}`);
     };
 
