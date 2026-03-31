@@ -191,16 +191,18 @@ export async function syncFhirData() {
             }
 
             // Fetch Base Resources
+            // Fetch Base Resources
             // 由於 Sandbox 上有數百萬筆其他人產生的 Synthea 假資料會干擾科別顯示 (UUID)
             // 這裡我們強制過濾出我們自己生成的資料 (使用 kpim_test_data 標籤)
-            let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=500`;
+            // 為了避免 Vercel 15秒 的 Serverless Timeout，限制只抓最新的 200 筆測試資料
+            let url = `${activeFhirUrl}/${baseResource}?_tag=kpim_test_data&_count=200`;
             // Add date filter if applicable (Procedure, Encounter)
             if (['Procedure', 'Encounter'].includes(baseResource)) {
                 url += `&date=ge${START_DATE}`;
             }
 
-            // 由於只抓取我們自己的核心資料，5000 筆上限不會拖慢速度，且能獲得完整 KPI
-            let resources = await fetchFhirAll(url, 5000, accessToken); 
+            // 由於只抓取我們自己的核心資料，且限制在 200 筆，可避免 Vercel 504 Timeout
+            let resources = await fetchFhirAll(url, 200, accessToken); 
             if (!resources || resources.length === 0) continue;
 
             // Fetch Context (Patient, Encounter)
@@ -211,9 +213,16 @@ export async function syncFhirData() {
                 return null;
             }).filter((id: string) => !!id);
 
-            const patMap = new Map((await fetchByIds(activeFhirUrl, "Patient", patIds, accessToken)).map((p: any) => [p.id, p]));
-            const encMap = new Map((await fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken)).map((e: any) => [e.id, e]));
-            const pracMap = new Map((await fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken)).map((p: any) => [p.id, p]));
+            // 並行發送 API 請求以大幅縮短執行時間，防止 Timeout
+            const [patData, encData, pracData] = await Promise.all([
+                fetchByIds(activeFhirUrl, "Patient", patIds, accessToken),
+                fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken),
+                fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken)
+            ]);
+
+            const patMap = new Map(patData.map((p: any) => [p.id, p]));
+            const encMap = new Map(encData.map((e: any) => [e.id, e]));
+            const pracMap = new Map(pracData.map((p: any) => [p.id, p]));
 
             // Apply Denominator Logic (Filter Base Resources)
             let denominatorSet = resources.filter((res: any) => {

@@ -1,0 +1,11 @@
+const fs = require('fs');
+
+const urlString = `WzQsIiIsIiIsIiIsMCwwLDAsIiIsIiIsImNjMzQ0NzI3LTZmOTAtNDk2Yy05NGZkLWM3ODI5YWE5YTUxZCIsIiIsIiIsIiIsIntcbiAgXCJrZXlzXCI6IFtcbiAgICB7XG4gICAgICBcImt0eVwiOiBcIlJTQVwiLFxuICAgICAgXCJuXCI6IFwicEtfd0x2aHBmN0EwOW5PRm9DQ19zMHpjS3V3MkVrV0g4NHFVaFZkOTlFeW1pUWFqN2JyOXA4VWMwUmMzcmxCZl9ERHhpbWM5d3B5V2hUSHFYYW1BY2hyalhtcTNzVS1LbnVJS2txSXpJWGJHUlI0VFVmLWZ6NUVWQWs2TnltWFV3ZXVrTHBmcFQ4NGlSbjh1N0QzRmYzUVJDbVl0TUxuaU5LM3ItV3pGU0pvWVA3RHFNSC13T3M4YkxzU0JaU1VDcFhEN01GRjNuS2Z0aFNzMzV5N3NkLWpsWUpWT3A3OWx1bFNIYUY4cGhVNFZPeGpPWWI1XzRGRlZ2ZGFlaHVUUVAxQnJINUdHN3VCa1lEUktOSkdlTmxfVUdPNzV4ekdPWkpzQzB1ZHZCckFJT19SMUd2RzhxcnNBaUpyUllQb2RPRnV4QUFWOHZMY0NlSFY3eWZVei1RXCIsXG4gICAgICBcImVcIjogXCJBUUFCXCIsXG4gICAgICBcImtpZFwiOiBcIjRhZmY5NTY0MGQyZjZlMzlkMzlhYTc0ZDc2YmMxYTczXCIsXG4gICAgICBcImFsZ1wiOiBcIlJTMzg0XCIsXG4gICAgICBcInVzZVwiOiBcInNpZ1wiXG4gICAgfVxuICBdXG59IiwxLDEsIiJd`;
+
+const decoded = Buffer.from(urlString, 'base64').toString('utf8');
+const arr = JSON.parse(decoded);
+const jwks = JSON.parse(arr[14]);
+console.log("Sandbox URL JWKS:", jwks.keys[0].kid);
+
+const localJwks = JSON.parse(fs.readFileSync('smart-public-jwk.json', 'utf8'));
+console.log("Local smart-public-jwk.json:", localJwks.keys[0].kid);
