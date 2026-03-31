@@ -735,7 +735,7 @@ export async function exportFHIRTestCases() {
             await supabase.from("kpi_detail").insert(batch);
         }
 
-        return { success: true, message: "Export and Sync successful." };
+        return { success: true, message: "Export and Sync successful.", data: bundle };
     } catch (err) {
         console.error(err);
         return { success: false, message: "Export failed: " + String(err) };
