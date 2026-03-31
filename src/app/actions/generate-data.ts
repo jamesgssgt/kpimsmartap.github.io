@@ -93,7 +93,7 @@ async function createInfrastructure(pushToFhir = true, fhirBundleBuffer: any[] =
 
         for (const [d_code, d_info] of Object.entries(DEPT_TEMPLATE)) {
             const dept_org_id = `org-${hosp.code.toLowerCase()}-${d_code.toLowerCase()}`;
-            const full_dept_name = `【${hosp.name}】${d_info.name}`;
+            const full_dept_name = d_info.name;
 
             if (pushToFhir) {
                 fhirBundleBuffer.push({
@@ -111,7 +111,7 @@ async function createInfrastructure(pushToFhir = true, fhirBundleBuffer: any[] =
                 const surname = d_info.docs[i];
                 const doc_id = `doc-${hosp.code.toLowerCase()}-${d_code.toLowerCase()}-${i}`;
                 const doc_name_short = surname;
-                const full_name = `${doc_name_short} (${hosp.name.slice(0, 2)})`;
+                const full_name = surname;
 
                 if (pushToFhir) {
                     fhirBundleBuffer.push({
@@ -269,7 +269,7 @@ export async function generateDataV2(mode: 'mortality' | 'antibiotic', batchInde
             birthDate.setDate(randomInt(1, 28));
             const birthDateStr = birthDate.toISOString().split('T')[0];
 
-            const hospNameRaw = chosenDeptObj.org_name.match(/【(.*?)】/)?.[1] || "Unknown Hospital";
+            const hospNameRaw = hCode ? HOSPITALS.find(h => h.code === hCode)?.name || "台北綜合醫院" : "台北綜合醫院";
             const hosp_org_id = hCode ? `org-${hCode.toLowerCase()}` : "org-tp-gen";
 
             fhirBundleBuffer.push({
