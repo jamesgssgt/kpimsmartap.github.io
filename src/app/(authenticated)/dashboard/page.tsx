@@ -9,7 +9,6 @@ import { SignOutButton } from "@/components/SignOutButton";
 import { DashboardTabs } from "@/components/dashboard/DashboardTabs";
 import { KPIItem, KPIDetail } from "@/types/dashboard";
 
-
 export const dynamic = "force-dynamic";
 export const revalidate = 0;
 
@@ -36,7 +35,6 @@ export default async function DashboardPage(props: {
         const deptFilters = deptFilterStr ? deptFilterStr.split(",") : [];
         const doctorFilters = doctorFilterStr ? doctorFilterStr.split(",") : [];
 
-
         const {
             data: { user },
         } = await supabase.auth.getUser();
@@ -62,11 +60,9 @@ export default async function DashboardPage(props: {
         if (identityCookie) {
             try {
                 const identity = JSON.parse(identityCookie);
-                // Smart Name > Supabase Email > Smart Sub > Guest
                 if (identity.name && identity.name.trim() !== "") {
                     displayName = identity.name;
                 } else if (identity.sub && (!user || !user.email)) {
-                    // Start of fallback: Only show ID if we have NO email
                     displayName = identity.sub;
                     if (displayName === "unknown") {
                         displayName = "未知 Practitioner (請檢視 Token)";
@@ -83,7 +79,7 @@ export default async function DashboardPage(props: {
         // Fetch Pinned Indicators
         const { data: pinnedDefs } = await supabase
             .from("kpi_definitions")
-            .select("name, numerator_name, denominator_name")
+            .select("kpiid, name, numerator_name, denominator_name, formula")
             .eq("is_pinned", true)
             .order("name", { ascending: true });
 
@@ -96,12 +92,13 @@ export default async function DashboardPage(props: {
 
         let pinnedNames = pinnedDefs?.map(d => d.name) || [];
         let primaryIndicatorName = "";
-        let numeratorLabel = "分子(術後 48 小時死亡人次)";
-        let denominatorLabel = "分母(手術人次)";
+        let numeratorLabel = "分子";
+        let denominatorLabel = "分母";
+        let activeKpiId = null;
+        let activeFormula = "";
 
         // 1. Determine Primary Indicator & Labels
         if (pinnedNames.length > 0) {
-            // Pinned: Default to first, allow override by URL param
             primaryIndicatorName = pinnedNames[0];
             let activeDef = pinnedDefs![0];
 
@@ -112,11 +109,12 @@ export default async function DashboardPage(props: {
 
             numeratorLabel = activeDef.numerator_name || "分子";
             denominatorLabel = activeDef.denominator_name || "分母";
+            activeKpiId = activeDef.kpiid;
+            activeFormula = activeDef.formula || "";
         } else {
-            // Not Pinned: Fallback to first alphabetical in DB
             const { data: firstDef } = await supabase
                 .from("kpi_definitions")
-                .select("name, numerator_name, denominator_name")
+                .select("kpiid, name, numerator_name, denominator_name, formula")
                 .order("name", { ascending: true })
                 .limit(1)
                 .single();
@@ -125,38 +123,57 @@ export default async function DashboardPage(props: {
                 primaryIndicatorName = firstDef.name;
                 numeratorLabel = firstDef.numerator_name || "分子";
                 denominatorLabel = firstDef.denominator_name || "分母";
+                activeKpiId = firstDef.kpiid;
+                activeFormula = firstDef.formula || "";
             } else {
-                primaryIndicatorName = "手術後 48 小時內死亡率"; // Ultimate fallback
+                primaryIndicatorName = "手術後 48 小時內死亡率"; 
             }
 
-            // If URL param exists (even if not pinned), try to honor it (simple override)
             if (kpiParam) {
                 primaryIndicatorName = decodeURIComponent(kpiParam);
+                // Need to re-fetch if override by URL
+                const { data: overDef } = await supabase.from("kpi_definitions").select("kpiid, formula").eq("name", primaryIndicatorName).single();
+                if (overDef) {
+                    activeKpiId = overDef.kpiid;
+                    activeFormula = overDef.formula || "";
+                }
             }
         }
 
-        // Fetch KPI Details - Filtered SERVER SIDE by Primary Indicator to avoid 1000 row limit
-        // We trim the primary indicator name just in case, but usually DB match is exact. 
-        // If DB has whitespace issues, we might need ILIKE or similar, but exact match is standard.
-        // Assuming 'primaryIndicatorName' comes primarily from DB 'pinnedDefs' or 'firstDef', it should match accurately.
+        // Fetch KPI Details - Filtered SERVER SIDE by Primary Indicator ID
         const { data: detailDataRaw } = await supabase
-            .from("KPI_Detail")
+            .from("kpi_detail")
             .select("*")
-            .eq("indicator_name", primaryIndicatorName)
-            .order('report_date', { ascending: false })
-            .limit(5000); // 5000 limit for robustness
+            .eq("kpi_id", activeKpiId)
+            .order("data_date", { ascending: false })
+            .limit(5000);
 
         let kpiItems: KPIItem[] = kpiDataRaw || [];
-        let kpiDetails: KPIDetail[] = detailDataRaw || [];
-
-        // Filter Summary (Items) by Pinned if any exist (for Dropdowns)
-        if (pinnedNames.length > 0) {
-            const safePinned = pinnedNames.map(n => n.trim());
-            kpiItems = kpiItems.filter(item => item.indicator_name && safePinned.includes(item.indicator_name.trim()));
-        }
-
-        // kpiDetails is already strictly filtered to primaryIndicatorName. 
-        // We can just proceed with it.
+        
+        // Map snake_case database fields to the UI expected KPIDetail format
+        let kpiDetails: KPIDetail[] = (detailDataRaw || []).map(d => ({
+            id: d.id,
+            created_at: d.created_at,
+            department: d.department,
+            doctor: d.doctor_name,
+            doctor_id: d.doctor_id,
+            indicator_name: primaryIndicatorName,
+            indicator_def: activeFormula,
+            numerator: d.numerator_value,
+            denominator: d.denominator_value,
+            value: d.kpi_value,
+            unit: "%",
+            status: d.kpi_value > 0 ? "異常" : "正常", 
+            patient_id: d.patient_id,
+            patient_gender: d.patient_gender,
+            patient_birthday: d.patient_birth_date,
+            report_date: d.data_date,
+            admission_date: "",
+            discharge_date: "",
+            op_start: "",
+            op_end: "",
+            abnormal_reason: ""
+        }));
 
         // 1. Prepare Filter Options
         const departments = Array.from(new Set(kpiItems.map(item => item.department).filter(Boolean)));
@@ -180,10 +197,8 @@ export default async function DashboardPage(props: {
             .filter(d => d > 0);
 
         const globalMaxDateTs = allDates.length > 0 ? Math.max(...allDates) : 0;
-        const globalMinDateTs = allDates.length > 0 ? Math.min(...allDates) : 0;
-
         const globalMaxDateStr = globalMaxDateTs > 0 ? new Date(globalMaxDateTs).toISOString().split('T')[0] : "";
-        const globalMinDateStr = globalMaxDateTs > 0 ? "2026-01-01" : ""; // Requested default 2026-01-01 start
+        const globalMinDateStr = globalMaxDateTs > 0 ? "2026-01-01" : ""; 
 
         // 4. Apply Date Range Filter to Data
         let filteredDetails = [...kpiDetails];
@@ -194,7 +209,6 @@ export default async function DashboardPage(props: {
             filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date <= endDate);
         }
 
-        // kpiRawData used for metrics calculation - already specific to Primary Indicator
         const kpiRawData = filteredDetails;
 
         // DRILL DOWN LOGIC
@@ -230,15 +244,12 @@ export default async function DashboardPage(props: {
 
         const latestMetrics: KPIDetail[] = Array.from(kpiAggMap.values()).map(agg => {
             const val = agg.den > 0 ? parseFloat(((agg.num / agg.den) * 100).toFixed(2)) : 0;
-
-            // Determine Status based on Target
             const target = targetMap.get(agg.indicator);
             let status = "正常";
 
             if (target && target.val !== undefined && target.val !== null) {
                 const tVal = Number(target.val);
                 const op = target.op || ">=";
-
                 let isNormal = true;
                 switch (op) {
                     case "<=": isNormal = val <= tVal; break;
@@ -248,9 +259,7 @@ export default async function DashboardPage(props: {
                     case "=": isNormal = val === tVal; break;
                     default: isNormal = val >= tVal;
                 }
-
                 if (!isNormal) status = "異常";
-
             } else {
                 if (val > 0) status = "異常";
             }
@@ -281,15 +290,13 @@ export default async function DashboardPage(props: {
 
         // 7. Trend Chart Data
         const trendMap = new Map<string, { sum: number; count: number }>();
-        const trendRelevantDetails = filteredDetails; // Already filtered
-
-        trendRelevantDetails.forEach((item) => {
+        filteredDetails.forEach((item) => {
             if (item.report_date) {
                 const key = item.report_date.substring(0, 7);
                 const current = trendMap.get(key) || { sum: 0, count: 0 };
                 trendMap.set(key, {
-                    sum: current.sum + item.value,
-                    count: current.count + 1,
+                    sum: current.sum + item.numerator,
+                    count: current.count + item.denominator,
                 });
             }
         });
@@ -302,10 +309,8 @@ export default async function DashboardPage(props: {
             .sort((a, b) => a.date.localeCompare(b.date));
 
         // 8. Bar Chart Data
-        const barRawData = filteredDetails; // Already filtered
-
         const deptBarMap = new Map<string, { num: number; den: number }>();
-        barRawData.forEach(item => {
+        filteredDetails.forEach(item => {
             const key = isDrillDown ? item.doctor : item.department;
             const current = deptBarMap.get(key) || { num: 0, den: 0 };
             deptBarMap.set(key, {
@@ -322,17 +327,14 @@ export default async function DashboardPage(props: {
             .sort((a, b) => b.value - a.value);
 
         // 9. Abnormal Items
-        const primaryIndicatorItems = kpiDetails; // Already filtered
-
-        const primaryDates = primaryIndicatorItems
+        const primaryDates = kpiDetails
             .map(d => d.report_date ? new Date(d.report_date).getTime() : 0)
             .filter(d => d > 0);
         const primaryMaxDateTs = primaryDates.length > 0 ? Math.max(...primaryDates) : 0;
         const primaryMaxDateStr = primaryMaxDateTs > 0 ? new Date(primaryMaxDateTs).toISOString().split('T')[0] : "";
-
         const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : primaryMaxDateStr.substring(0, 7);
 
-        const abnormalItems = primaryIndicatorItems
+        const abnormalItems = kpiDetails
             .filter((item) => {
                 if (!item.report_date) return false;
                 return item.status === "異常" && item.report_date.startsWith(targetAbnormalMonth);
@@ -341,8 +343,6 @@ export default async function DashboardPage(props: {
                 if (a.report_date && b.report_date) return new Date(b.report_date).getTime() - new Date(a.report_date).getTime();
                 return 0;
             });
-
-
 
         return (
             <div className="flex-1 space-y-4 p-6 md:p-12">
@@ -397,13 +397,11 @@ export default async function DashboardPage(props: {
                     <div className="space-y-4">
                         <AbnormalTable items={abnormalItems} title={`${primaryIndicatorName} (${targetAbnormalMonth || '無資料'}) 異常詳細清單`} />
                     </div>
-
-
                 </div>
 
                 <div className="mt-8 border-t pt-4">
                     <div className="text-[10px] text-gray-300 text-right">
-                        v2026.01.16-CookieFix-P Fallback
+                        v2026.03.31-TableUnified
                     </div>
                 </div>
             </div>

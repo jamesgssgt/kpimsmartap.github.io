@@ -1,4 +1,3 @@
-
 import { createClient } from "@/utils/supabase/server";
 import { redirect } from "next/navigation";
 import { KPITable } from "@/components/dashboard/KPITable";
@@ -37,37 +36,56 @@ export default async function FavoritesPage(props: {
 
         // --- ACCOUNT MAPPING LOGIC ---
         let targetDoctor = "";
-
-        // 1. Try DB Preference
         const { data: favData } = await supabase.from("favorites").select("doctor").eq("user_id", user.id).single();
         if (favData) {
             targetDoctor = favData.doctor;
         }
-
-        // 2. Fallback Hardcoded Mapping
         if (!targetDoctor) {
-            if (user.email === "joseph@kpim.com") {
-                targetDoctor = "李醫師";
-            } else if (user.email === "user_test@kpim.com") {
-                targetDoctor = "劉醫師";
-            }
+            if (user.email === "joseph@kpim.com") targetDoctor = "李醫師";
+            else if (user.email === "user_test@kpim.com") targetDoctor = "劉醫師";
         }
 
         // Fetch Data
         const { data: kpiDataRaw } = await supabase.from("KPI").select("*");
-        const { data: detailDataRaw } = await supabase.from("KPI_Detail").select("*");
+        
+        // Target: 手術後 48 小時內死亡率
+        const targetIndName = "手術後 48 小時內死亡率";
+        const { data: targetKpiDef } = await supabase.from("kpi_definitions").select("kpiid, formula").eq("name", targetIndName).single();
+        const targetKpiId = targetKpiDef?.kpiid;
+
+        const { data: detailDataRaw } = await supabase
+            .from("kpi_detail")
+            .select("*")
+            .eq("kpi_id", targetKpiId);
 
         let kpiItems: KPIItem[] = kpiDataRaw || [];
-        let kpiDetails: KPIDetail[] = detailDataRaw || [];
+        
+        // Map to KPIDetail interface
+        let kpiDetails: KPIDetail[] = (detailDataRaw || []).map(d => ({
+            id: d.id,
+            department: d.department,
+            doctor: d.doctor_name,
+            indicator_name: targetIndName,
+            numerator: d.numerator_value,
+            denominator: d.denominator_value,
+            value: d.kpi_value,
+            unit: "%",
+            status: d.kpi_value > 0 ? "異常" : "正常",
+            patient_id: d.patient_id,
+            patient_gender: d.patient_gender,
+            patient_birthday: d.patient_birth_date,
+            report_date: d.data_date,
+            admission_date: "",
+            discharge_date: "",
+            op_start: "",
+            op_end: "",
+            abnormal_reason: ""
+        }));
 
-        // 1. Filter by Target Doctor (My Favorites = My Data)
+        // 1. Filter by Target Doctor
         if (targetDoctor) {
             kpiDetails = kpiDetails.filter(d => d.doctor === targetDoctor);
         }
-
-        // 2. Filter by Specific Indicator "術後48小時死亡率" (Based on User Title Request)
-        const targetIndicator = "術後48小時死亡率";
-        kpiDetails = kpiDetails.filter(d => d.indicator_name.replace(/\s/g, "") === targetIndicator);
 
         // 3. Date Range Logic
         const allDates = kpiDetails
@@ -75,12 +93,9 @@ export default async function FavoritesPage(props: {
             .filter(d => d > 0);
 
         const globalMaxDateTs = allDates.length > 0 ? Math.max(...allDates) : 0;
-        const globalMinDateTs = allDates.length > 0 ? Math.min(...allDates) : 0;
-
         const globalMaxDateStr = globalMaxDateTs > 0 ? new Date(globalMaxDateTs).toISOString().split('T')[0] : "";
-        const globalMinDateStr = globalMinDateTs > 0 ? new Date(globalMinDateTs).toISOString().split('T')[0] : "";
+        const globalMinDateStr = globalMaxDateTs > 0 ? "2026-01-01" : "";
 
-        // Filters applied to details
         let filteredDetails = [...kpiDetails];
         if (startDate) {
             filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date >= startDate);
@@ -89,41 +104,26 @@ export default async function FavoritesPage(props: {
             filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date <= endDate);
         }
 
-        // Find Latest Date for Title
-        const filteredDates = filteredDetails
-            .map(d => d.report_date ? d.report_date : "")
-            .filter(Boolean);
-        const latestFilteredDateStr = filteredDates.length > 0 ? filteredDates.sort().pop()! : globalMaxDateStr;
-        const displayDate = latestFilteredDateStr ? latestFilteredDateStr.split('T')[0] : (new Date().toISOString().split('T')[0]);
+        const displayDate = globalMaxDateStr;
 
-        // 4. Metrics Calculation (Single Row for this Doctor)
-        // Similar to Dashboard Drilled view
-        const kpiMonthPrefix = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
-        const kpiRawData = kpiDetails.filter(d =>
-            d.report_date && d.report_date.startsWith(kpiMonthPrefix)
-        );
-
+        // Metrics for the Header
         let num = 0;
         let den = 0;
-        let unit = "%";
-
-        kpiRawData.forEach(item => {
+        filteredDetails.forEach(item => {
             num += item.numerator;
             den += item.denominator;
-            if (item.unit) unit = item.unit;
         });
-
         const val = den > 0 ? parseFloat(((num / den) * 100).toFixed(2)) : 0;
 
         const latestMetrics: KPIDetail[] = [{
             id: "favorites-1",
-            department: "骨科", // Hardcoded or derived
+            department: "骨科",
             doctor: targetDoctor,
-            indicator_name: "術後 48 小時死亡率",
+            indicator_name: targetIndName,
             numerator: num,
             denominator: den,
             value: val,
-            unit: unit,
+            unit: "%",
             status: val > 0 ? "異常" : "正常",
             patient_id: "",
             patient_gender: "",
@@ -136,30 +136,19 @@ export default async function FavoritesPage(props: {
             abnormal_reason: ""
         }];
 
-        // 5. Monthly Aggregation for Ranking Table (Top 4 by Mortality Rate)
-        const monthlyStatsMap = new Map<string, { num: number; den: number; unit: string }>();
-        const trendMap = new Map<string, { sum: number; count: number }>();
-
+        // Trend and Table Data
+        const monthlyStatsMap = new Map<string, { num: number; den: number }>();
         filteredDetails.forEach((item) => {
             if (item.report_date) {
-                const key = item.report_date.substring(0, 7); // YYYY-MM
-
-                // For Ranking Table (Aggregated sums per month)
-                const currentMonth = monthlyStatsMap.get(key) || { num: 0, den: 0, unit: "%" };
+                const key = item.report_date.substring(0, 7);
+                const currentMonth = monthlyStatsMap.get(key) || { num: 0, den: 0 };
                 monthlyStatsMap.set(key, {
                     num: currentMonth.num + item.numerator,
-                    den: currentMonth.den + item.denominator,
-                    unit: item.unit || "%"
+                    den: currentMonth.den + item.denominator
                 });
-
-                // For Trend Map (Average of values - existing logic kept for consistency if needed, but we typically plot the aggregated rate now)
-                // Actually, for the Trend Chart, it usually plots the calculated rate per point in time. 
-                // Using the same aggregated logic for consistency is better.
-                // Let's reuse monthlyStatsMap for TrendData to strictly match.
             }
         });
 
-        // Create Monthly Items for Table
         const monthlyItems: KPIDetail[] = Array.from(monthlyStatsMap.entries())
             .map(([date, stats]) => {
                 const val = stats.den > 0 ? parseFloat(((stats.num / stats.den) * 100).toFixed(2)) : 0;
@@ -167,33 +156,27 @@ export default async function FavoritesPage(props: {
                     id: `monthly-${date}`,
                     department: "骨科",
                     doctor: targetDoctor,
-                    indicator_name: "術後 48 小時死亡率",
+                    indicator_name: targetIndName,
                     numerator: stats.num,
                     denominator: stats.den,
                     value: val,
-                    unit: stats.unit,
+                    unit: "%",
                     status: val > 0 ? "異常" : "正常",
                     patient_id: "",
-                    report_date: date, // YYYY-MM
+                    report_date: date,
                 } as KPIDetail;
             })
-            .sort((a, b) => b.value - a.value) // Sort by Value Descending (High to Low)
-            .slice(0, 4); // Top 4
+            .sort((a, b) => b.report_date.localeCompare(a.report_date))
+            .slice(0, 4);
 
-        // Create Trend Data (Sorted by Date Ascending)
         const trendData = Array.from(monthlyStatsMap.entries())
-            .map(([date, stats]) => {
-                const val = stats.den > 0 ? parseFloat(((stats.num / stats.den) * 100).toFixed(2)) : 0;
-                return {
-                    date,
-                    value: val
-                };
-            })
+            .map(([date, stats]) => ({
+                date,
+                value: stats.den > 0 ? parseFloat(((stats.num / stats.den) * 100).toFixed(2)) : 0
+            }))
             .sort((a, b) => a.date.localeCompare(b.date));
 
-
-        // 6. Abnormal Items (Keep existing logic)
-        const abnormalItems = kpiRawData
+        const abnormalItems = filteredDetails
             .filter((item) => item.status === "異常")
             .sort((a, b) => {
                 if (a.report_date && b.report_date) return new Date(b.report_date).getTime() - new Date(a.report_date).getTime();
@@ -206,64 +189,37 @@ export default async function FavoritesPage(props: {
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
                         <h2 className="text-2xl font-bold tracking-tight">My Favorites</h2>
                         <div className="flex items-center space-x-2">
-                            <span className="text-sm text-muted-foreground mr-2 hidden md:inline-block">{user.email}</span>
+                            <span className="text-sm text-muted-foreground mr-2">{user.email}</span>
                             <SignOutButton />
                         </div>
-                    </div>
-                    <div className="flex justify-start w-full">
-                        <DashboardFilters
-                            departments={[]} // No options needed
-                            doctors={[]} // No options needed
-                            defaultStartDate={globalMinDateStr}
-                            defaultEndDate={globalMaxDateStr}
-                            showDeptFilter={false}
-                            showDoctorFilter={false}
-                        />
                     </div>
                 </div>
 
                 <div className="space-y-8">
-                    {/* KPI Table - Monthly Ranking */}
                     <div className="space-y-4">
                         <KPITable
-                            items={monthlyItems}
-                            title={`指標監控-術後 48 小時死亡率-月監控資料最後一日(${displayDate})`}
-                            viewType="date-ranking"
+                            items={latestMetrics}
+                            title={`指標監控-個人指標統計`}
+                            viewType="doctor"
                         />
                     </div>
 
-                    {/* Charts - Trend Only */}
                     <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
-                        <div className="col-span-1 md:col-span-2 lg:col-span-7"> {/* Expanded to full width */}
-                            <TrendChart data={trendData} title="指標趨勢 (月統計)" />
+                        <div className="col-span-1 md:col-span-2 lg:col-span-7">
+                            <TrendChart data={trendData} title={`${targetIndName} 趨勢 (月統計)`} />
                         </div>
                     </div>
 
-                    {/* Abnormal Table */}
                     <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems} title="異常病患清單" />
+                        <AbnormalTable items={abnormalItems} title="異常病患詳細清單" />
                     </div>
                 </div>
             </div>
         );
 
     } catch (error) {
-        // Next.js uses errors for redirects. We need to rethrow it.
-        if (error instanceof Error && error.message === "NEXT_REDIRECT") {
-            throw error;
-        }
-        if ((error as any)?.digest?.startsWith?.('NEXT_REDIRECT')) {
-            throw error;
-        }
-
+        if (error instanceof Error && error.message === "NEXT_REDIRECT") throw error;
         console.error("Favorites Page Error:", error);
-        return (
-            <div className="p-8 text-center">
-                <h2 className="text-xl font-bold text-red-600">載入頁面時發生錯誤</h2>
-                <div className="mt-4 p-4 bg-slate-100 rounded text-left overflow-auto max-w-2xl mx-auto">
-                    <code className="text-xs">{String(error)}</code>
-                </div>
-            </div>
-        );
+        return <div className="p-8 text-center text-red-600">載入頁面時發生錯誤</div>;
     }
 }

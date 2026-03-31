@@ -186,8 +186,8 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
         ]);
         
         // 僅清除該指標舊資料 (不全域重置)
-        await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
-        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
+        await supabase.from("kpi_detail").delete().eq("kpi_id", kpi.kpiid);
+        await supabase.from("KPI").delete().eq("indicator_name", indicatorName); // Keep KPI (summary) as is if it uses indicator_name as PK
 
         let accessToken = null;
         try { accessToken = await getBackendAccessToken(activeFhirUrl); } catch (e) {}
@@ -325,24 +325,18 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             let status = isPositiveKPI ? (isNumerator ? "正常" : "異常") : (isNumerator ? "異常" : "正常");
 
             const detail = {
-                kpi_id: kpi.kpiid, // Keep the UUID ref
+                kpi_id: kpi.kpiid,
+                data_date: reportDate.split('T')[0],
                 department: deptName,
-                doctor: doctorName,
-                indicator_name: indicatorName,
-                indicator_def: kpi.formula || '',
+                doctor_id: doctorId,
+                doctor_name: doctorName,
+                hospital_id: "市立聯合醫院",
                 patient_id: patId,
                 patient_gender: patient?.gender,
-                patient_birthday: patient?.birthDate,
-                patient_age: patient?.birthDate ? new Date().getFullYear() - new Date(patient.birthDate).getFullYear() : 0,
-                status: status,
-                value: isNumerator ? 1 : 0,
-                numerator: isNumerator ? 1 : 0,
-                denominator: 1,
-                unit: "%",
-                report_date: reportDate,
-                abnormal_reason: abnormalReason,
-                hospital_name: "市立聯合醫院",
-                doctor_id: doctorId,
+                patient_birth_date: patient?.birthDate,
+                numerator_value: isNumerator ? 1 : 0,
+                denominator_value: 1,
+                kpi_value: isNumerator ? 1 : 0,
                 _ftData: ftData // Temporary storage for second pass
             };
             allDetails.push(detail);
@@ -367,11 +361,11 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             }));
             await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
             
-            // Insert into KPI_Detail and get back the generated IDs
+            // Insert into kpi_detail and get back the generated IDs
             const { data: insertedDetails, error: insError } = await supabase
-                .from("KPI_Detail")
+                .from("kpi_detail")
                 .insert(allDetails.map(({ _ftData, ...rest }) => rest))
-                .select("id, patient_id, report_date, doctor_id"); // Need fields to match back
+                .select("id, patient_id"); // Need ID to link kpi_ft_detail
 
             if (insError) throw insError;
 
@@ -380,9 +374,6 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
                 const ftToInsert = [];
                 for (let i = 0; i < insertedDetails.length; i++) {
                     const insObj = insertedDetails[i];
-                    // Find original source to get _ftData
-                    // We assume order is preserved by .insert(), but to be safe we can use a key
-                    // For now, let's use the Index since they were inserted as a single batch
                     const original = allDetails[i];
                     if (original && original._ftData) {
                         const ftRow: any = { kpi_detail_id: insObj.id };
