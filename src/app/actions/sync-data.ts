@@ -180,7 +180,10 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
         const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
         if (!kpi) throw new Error("Indicator not found");
 
-        const { data: kpiDlls } = await supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).order('seq', { ascending: true });
+        const [ { data: kpiDlls }, { data: ftInf } ] = await Promise.all([
+            supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).order('seq', { ascending: true }),
+            supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpi.kpiid).order('seq', { ascending: true })
+        ]);
         
         // 僅清除該指標舊資料 (不全域重置)
         await supabase.from("KPI_Detail").delete().eq("indicator_name", indicatorName);
@@ -237,6 +240,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
         });
 
         const allDetails: any[] = [];
+        const allFtDetails: any[] = [];
         const allSummaryMap = new Map<string, any>();
 
         for (const res of denominatorSet) {
@@ -292,6 +296,17 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
                 });
             }
 
+            // --- 動態欄位提取 (kpi_ft_detail) ---
+            const ftData: Record<string, any> = {};
+            if (ftInf && ftInf.length > 0) {
+                for (const f of ftInf) {
+                    const val = getValueByPath(res, f.fhir_source) || getValueByPath(patient, f.fhir_source) || getValueByPath(encounter, f.fhir_source);
+                    if (val !== undefined && val !== null && f.column_slot) {
+                        ftData[f.column_slot] = String(val);
+                    }
+                }
+            }
+
             let deptName = "一般外科";
             if (encounter?.serviceProvider?.display) deptName = encounter.serviceProvider.display;
             else if (encounter?.serviceProvider?.reference) deptName = encounter.serviceProvider.reference.split('/').pop() || "一般外科";
@@ -310,6 +325,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             let status = isPositiveKPI ? (isNumerator ? "正常" : "異常") : (isNumerator ? "異常" : "正常");
 
             const detail = {
+                kpi_id: kpi.kpiid, // Keep the UUID ref
                 department: deptName,
                 doctor: doctorName,
                 indicator_name: indicatorName,
@@ -326,7 +342,8 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
                 report_date: reportDate,
                 abnormal_reason: abnormalReason,
                 hospital_name: "市立聯合醫院",
-                doctor_id: doctorId
+                doctor_id: doctorId,
+                _ftData: ftData // Temporary storage for second pass
             };
             allDetails.push(detail);
 
@@ -349,7 +366,39 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
                 value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
             }));
             await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
-            await supabase.from("KPI_Detail").insert(allDetails);
+            
+            // Insert into KPI_Detail and get back the generated IDs
+            const { data: insertedDetails, error: insError } = await supabase
+                .from("KPI_Detail")
+                .insert(allDetails.map(({ _ftData, ...rest }) => rest))
+                .select("id, patient_id, report_date, doctor_id"); // Need fields to match back
+
+            if (insError) throw insError;
+
+            // Link and insert into kpi_ft_detail
+            if (insertedDetails && insertedDetails.length > 0 && ftInf && ftInf.length > 0) {
+                const ftToInsert = [];
+                for (let i = 0; i < insertedDetails.length; i++) {
+                    const insObj = insertedDetails[i];
+                    // Find original source to get _ftData
+                    // We assume order is preserved by .insert(), but to be safe we can use a key
+                    // For now, let's use the Index since they were inserted as a single batch
+                    const original = allDetails[i];
+                    if (original && original._ftData) {
+                        const ftRow: any = { kpi_detail_id: insObj.id };
+                        Object.keys(original._ftData).forEach(key => {
+                            if (key.startsWith('column')) {
+                                ftRow[key] = original._ftData[key];
+                            }
+                        });
+                        ftToInsert.push(ftRow);
+                    }
+                }
+
+                if (ftToInsert.length > 0) {
+                    await supabase.from("kpi_ft_detail").insert(ftToInsert);
+                }
+            }
         }
 
         return { success: true, message: `已完成: ${allDetails.length} 筆資料` };
