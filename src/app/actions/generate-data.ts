@@ -502,7 +502,7 @@ export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic
         const supabase = await createClient();
 
         if (mode === 'all') {
-            const { error: e1 } = await supabase.from("KPI").delete().neq('id', '00000000-0000-0000-0000-000000000000'); 
+            const { error: e1 } = await supabase.from("KPI").delete().neq('id', -1); 
             const { error: e2 } = await supabase.from("kpi_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000'); 
             const { error: e3 } = await supabase.from("kpi_ft_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
 
@@ -585,7 +585,7 @@ export async function exportFHIRTestCases() {
             });
         }
 
-        await supabase.from("KPI").delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from("KPI").delete().neq('id', -1);
         await supabase.from("kpi_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
         await supabase.from("kpi_ft_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
 
