@@ -293,17 +293,58 @@ interface SyncResult {
     error?: string;
 }
 
+/**
+ * Helper: Recalculate and Update KPI Summary from Details
+ */
+async function updateKPISummary(indicatorName: string, kpiid: string, formula: string) {
+    const supabase = await createClient();
+    
+    // Aggregate data from kpi_detail
+    const { data: summary } = await supabase.rpc('get_kpi_summary_by_indicator', { 
+        target_indicator_name: indicatorName 
+    });
+    
+    if (summary && summary.length > 0) {
+        for (const s of summary) {
+            await supabase.from("KPI").upsert({
+                department: s.department,
+                doctor: s.doctor_name,
+                indicator_name: indicatorName,
+                numerator: s.n,
+                denominator: s.d,
+                value: s.d > 0 ? parseFloat(((s.n / s.d) * 100).toFixed(2)) : 0,
+                indicator_def: formula,
+                unit: "%",
+                report_date: s.latest_date
+            }, { onConflict: "department, doctor, indicator_name" });
+        }
+    }
+}
+
+/**
+ * Manual Data Cleanup - User controlled
+ */
+export async function clearAllSyncData() {
+    try {
+        const supabase = await createClient();
+        await supabase.from("KPI").delete().neq("id", 0);
+        await supabase.from("kpi_detail").delete().neq("id", "00000000-0000-0000-0000-000000000000");
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, message: e.message };
+    }
+}
+
 export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string, stepInfo?: string): Promise<SyncResult> {
     const sid = sessionId || crypto.randomUUID();
-    console.log(`[Sync] Starting Reality V10 batch for ${indicatorName} (ID: ${sid})`);
-    const TIMEOUT_MS = 300000; 
+    const TIMEOUT_MS = 600000; // 10 minutes for large streaming
     
     const syncLogic = async () => {
         const supabase = await createClient();
         const START_DATE = getStartDate();
         const stepPrefix = stepInfo ? `[STEP] ${stepInfo} ` : "";
-        await addSyncLog(sid, `${stepPrefix}🚀 開始處理指標：「${indicatorName}」 (V10 全域鎖定版)`, "info", indicatorName);
-        // ... rest of the logic remains robust ...
+        await addSyncLog(sid, `${stepPrefix}🚀 流式同步啟動：「${indicatorName}」 (V12 增量存檔版)`, "info", indicatorName);
+        
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
         const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
         const { data: kpiDef } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
@@ -314,67 +355,40 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpiDef.kpiid).order('seq')
         ]);
         
-        await addSyncLog(sid, `正在清理舊有數據...`, "info", indicatorName);
-        const { data: detailsToDelete } = await supabase.from("kpi_detail").select("id").eq("kpi_id", kpiDef.kpiid);
-        if (detailsToDelete && detailsToDelete.length > 0) {
-            const ids = detailsToDelete.map(d => d.id);
-            await supabase.from("kpi_ft_detail").delete().in("kpi_detail_id", ids);
-        }
-        await supabase.from("kpi_detail").delete().eq("kpi_id", kpiDef.kpiid);
-        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
-
         let accessToken = "";
         try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e: any) {}
 
         const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
         let baseResource = denoms[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
-        const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=500`;
-        const resources = await fetchFhirAll(url, 150000, accessToken, sid, indicatorName); 
+        
+        // STREAMING START
+        let nextUrl: string | null = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=500`;
+        let totalProcessed = 0;
+        let pageIdx = 0;
 
-        if (!resources || resources.length === 0) {
-            await addSyncLog(sid, "查無相關資料。", "warning", indicatorName);
-            return { success: true, count: 0 };
-        }
+        while (nextUrl) {
+            pageIdx++;
+            const bundle = await fetchFhir(nextUrl, accessToken, sid, indicatorName);
+            const chunk = bundle.entry?.map((e: any) => e.resource) || [];
+            if (chunk.length === 0) break;
 
-        const subChunks = (arr: any[], size: number) => {
-            const res = [];
-            for (let i = 0; i < arr.length; i += size) res.push(arr.slice(i, i + size));
-            return res;
-        };
-
-        const chunks = subChunks(resources, 100); 
-        let processedCount = 0;
-        let maxDataDate = "1970-01-01";
-
-        for (const chunk of chunks) {
-            const patIds = chunk.map(r => r.subject?.reference?.split('/').pop()).filter(Boolean);
-            const encIds = chunk.map(r => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
-            const pracIds = chunk.map(r => r.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop()).filter(Boolean);
-            const needsObs = ftInf?.some(f => f.fhir_source?.includes('Observation'));
-            const needsMeds = ftInf?.some(f => f.fhir_source?.includes('Medication'));
-
-            const fetchPromises: Promise<any>[] = [
+            // PAGE PROCESSING
+            const patIds = chunk.map((r: any) => r.subject?.reference?.split('/').pop()).filter(Boolean);
+            const encIds = chunk.map((r: any) => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
+            const pracIds = chunk.map((r: any) => r.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop()).filter(Boolean);
+            
+            const [pats, encs, pracs] = await Promise.all([
                 fetchByIds(activeFhirUrl, "Patient", patIds, accessToken, sid, indicatorName),
                 fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken, sid, indicatorName),
                 fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken, sid, indicatorName)
-            ];
-            if (needsObs && encIds.length > 0) {
-                const obsTasks = subChunks(encIds, 50).map(c => () => fetchFhirAll(`${activeFhirUrl}/Observation?encounter=${c.join(',')}&_count=1000`, 2000, accessToken, sid, indicatorName));
-                fetchPromises.push(promiseLimit(obsTasks, 3).then(r => r.flat()));
-            } else fetchPromises.push(Promise.resolve([]));
-            if (needsMeds && encIds.length > 0) {
-                const medTasks = subChunks(encIds, 50).map(c => () => fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?context=${c.join(',')}&_count=1000`, 2000, accessToken, sid, indicatorName));
-                fetchPromises.push(promiseLimit(medTasks, 3).then(r => r.flat()));
-            } else fetchPromises.push(Promise.resolve([]));
+            ]);
 
-            const [pats, encs, pracs, obss, meds] = await Promise.all(fetchPromises);
             const patMap = new Map(pats.map((p: any) => [p.id, p]));
             const pracMap = new Map(pracs.map((p: any) => [p.id, p]));
             const encMap = new Map(encs.map((e: any) => [e.id, e]));
 
             const batchDetails: any[] = [];
             const batchFtDetails: any[] = [];
-            const batchSummary = new Map<string, { n: number, d: number, dept: string, doc: string, latestD: string }>();
 
             for (const res of chunk) {
                 const pId = res.subject?.reference?.split('/').pop();
@@ -403,67 +417,77 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                 const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
                 const dept = encounter?.serviceProvider?.display || "一般外科";
                 const dDate = extractResourceDate(res);
-                if (dDate > maxDataDate && dDate !== "1970-01-01") maxDataDate = dDate;
 
                 const detailId = crypto.randomUUID();
                 batchDetails.push({
-                    id: detailId, kpi_id: kpiDef.kpiid, data_date: dDate,
-                    department: dept, doctor_id: dId, doctor_name: dName,
-                    hospital_id: "台北綜合醫院", patient_id: pId, patient_gender: patient.gender,
-                    patient_birth_date: patient.birthDate, numerator_value: isNumerator ? 1 : 0,
-                    denominator_value: 1, kpi_value: isNumerator ? 1 : 0
+                    fhir_id: res.id, // V12: Logic link via FHIR ID
+                    kpi_id: kpiDef.kpiid, 
+                    indicator_name: indicatorName, // Crucial for aggregation
+                    data_date: dDate,
+                    department: dept, 
+                    doctor_id: dId, 
+                    doctor_name: dName,
+                    hospital_id: "台北綜合醫院", 
+                    patient_id: pId, 
+                    patient_gender: patient.gender,
+                    patient_birth_date: patient.birthDate, 
+                    numerator_value: isNumerator ? 1 : 0,
+                    denominator_value: 1, 
+                    kpi_value: isNumerator ? 1 : 0
                 });
 
                 if (ftInf && ftInf.length > 0) {
-                    const ftRow: any = { kpi_detail_id: detailId };
+                    const ftRow: any = { fhir_id: res.id }; // Linkable
                     for (const f of ftInf) {
                         let val = getValueByPath(res, f.fhir_source) || getValueByPath(patient, f.fhir_source) || getValueByPath(encounter, f.fhir_source);
                         if (f.column_slot) ftRow[f.column_slot] = String(val || "-");
                     }
                     batchFtDetails.push(ftRow);
                 }
-                const sumKey = `${dept}|${dName}`;
-                if (!batchSummary.has(sumKey)) batchSummary.set(sumKey, { n: 0, d: 0, dept, doc: dName, latestD: dDate });
-                const s = batchSummary.get(sumKey)!;
-                s.n += (isNumerator ? 1 : 0);
-                s.d += 1;
-                if (dDate > s.latestD && dDate !== "1970-01-01") s.latestD = dDate;
             }
 
+            // REAL-TIME SAVE
             if (batchDetails.length > 0) {
-                await supabase.from("kpi_detail").insert(batchDetails);
-                if (batchFtDetails.length > 0) await supabase.from("kpi_ft_detail").insert(batchFtDetails);
-
-                for (const s of batchSummary.values()) {
-                    const { data: exist } = await supabase.from("KPI").select("numerator, denominator, report_date").match({ department: s.dept, doctor: s.doc, indicator_name: indicatorName }).maybeSingle();
-                    const n = (exist?.numerator || 0) + s.n;
-                    const d = (exist?.denominator || 0) + s.d;
-                    let finalReportDate = s.latestD;
-                    if (exist?.report_date && exist.report_date > finalReportDate) finalReportDate = exist.report_date;
-
-                    await supabase.from("KPI").upsert({
-                        department: s.dept, doctor: s.doc, indicator_name: indicatorName,
-                        numerator: n, denominator: d, value: d > 0 ? parseFloat(((n / d) * 100).toFixed(2)) : 0,
-                        indicator_def: kpiDef.formula, unit: "%", report_date: finalReportDate
-                    }, { onConflict: "department, doctor, indicator_name" });
+                // Upsert Details (prevent dups via fhir_id)
+                await supabase.from("kpi_detail").upsert(batchDetails, { onConflict: "fhir_id" });
+                
+                // Update FT details (join via detail_id found from fhir_id)
+                if (batchFtDetails.length > 0) {
+                    const { data: savedDetails } = await supabase.from("kpi_detail").select("id, fhir_id").in("fhir_id", batchFtDetails.map(f => f.fhir_id));
+                    const fhirToUuid = new Map(savedDetails?.map(d => [d.fhir_id, d.id]) || []);
+                    const ftToSave = batchFtDetails.map(f => ({
+                        ...f,
+                        kpi_detail_id: fhirToUuid.get(f.fhir_id),
+                        fhir_id: undefined // remove temp field
+                    })).filter(f => f.kpi_detail_id);
+                    await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
                 }
             }
-            processedCount += chunk.length;
-            if (processedCount % 500 === 0 || processedCount === resources.length) {
-                await addSyncLog(sid, `✅ 進度：${processedCount}/${resources.length} 筆 (含採集與彙整)...`, "info", indicatorName);
+
+            totalProcessed += chunk.length;
+            await addSyncLog(sid, `✅ 進度：${totalProcessed} 筆已完成 (Page ${pageIdx})...`, "info", indicatorName);
+            
+            // Recalculate summary after each page for immediate dashboard update
+            await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
+
+            nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
+            // Stop if excessive (safety) but user has 25k so let's allow up to 100 pages
+            if (pageIdx >= 200) {
+                await addSyncLog(sid, "⚠️ 已達單次採集上限 (10萬筆)，終止當前任務。", "warning", indicatorName);
+                break;
             }
         }
-        await addSyncLog(sid, `🎉 指標「${indicatorName}」同步完成！截止日期：${maxDataDate}`, "success", indicatorName);
-        return { success: true, count: resources.length };
+
+        await addSyncLog(sid, `🎉 指標「${indicatorName}」串流同步結束！總計處理：${totalProcessed} 筆`, "success", indicatorName);
+        return { success: true, count: totalProcessed };
     };
 
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("SYNC_TIMEOUT")), TIMEOUT_MS));
     try {
         return await Promise.race([syncLogic(), timeoutPromise]) as SyncResult;
     } catch (e: any) {
-        const msg = e.message === "SYNC_TIMEOUT" ? "指標同步逾時，已轉為斷點續傳模式。" : e.message;
-        await addSyncLog(sid, `⚠️ 中斷：${msg}`, "warning", indicatorName);
-        return { success: false, message: msg };
+        await addSyncLog(sid, `⚠️ 中斷：${e.message}`, "warning", indicatorName);
+        return { success: false, message: e.message };
     }
 }
 
