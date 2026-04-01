@@ -54,85 +54,83 @@ const getStartDate = () => {
     return d.toISOString().split('T')[0];
 };
 
-async function fetchFhir(url: string, accessToken?: string | null) {
-    try {
-        console.log(`[FHIR Fetch] ${url}`);
-        const headers: Record<string, string> = { "Accept": "application/json" };
-        if (accessToken) {
-            headers["Authorization"] = `Bearer ${accessToken}`;
+async function fetchFhir(url: string, accessToken: string, sid?: string, indicatorName?: string) {
+    if (sid) await addSyncLog(sid, `[FHIR] GET ${url.split('?')[0].split('/').pop()}...`, "info", indicatorName);
+    const res = await fetch(url, {
+        headers: {
+            'Authorization': `Bearer ${accessToken}`,
+            'Accept': 'application/fhir+json'
         }
-        const res = await fetch(url, { headers, cache: 'no-store' });
-        if (!res.ok) throw new Error(`Status ${res.status}`);
-        return await res.json();
-    } catch (e) {
-        console.error("FHIR Fetch Error:", e);
-        return null; 
+    });
+
+    if (!res.ok) {
+        const errText = await res.text();
+        if (sid) await addSyncLog(sid, `[FHIR] ERROR: ${res.status} ${errText.substring(0, 50)}`, "error", indicatorName);
+        throw new Error(`HTTP ${res.status}: ${errText}`);
     }
+    const data = await res.json();
+    if (sid) await addSyncLog(sid, `[FHIR] SUCCESS (${data.entry?.length || 0} 筆)`, "info", indicatorName);
+    return data;
 }
 
-async function fetchFhirAll(url: string, maxItems = 20000, accessToken?: string | null) {
-    let results: any[] = [];
+async function fetchFhirAll(url: string, max: number = 1000, accessToken: string, sid?: string, indicatorName?: string) {
+    let all: any[] = [];
     let currentUrl = url;
-    try {
-        const headers: Record<string, string> = { "Accept": "application/json" };
-        if (accessToken) {
-            headers["Authorization"] = `Bearer ${accessToken}`;
-        }
 
-        while (currentUrl && results.length < maxItems) {
-            console.log(`[FHIR FetchAll] Page: ${currentUrl}`);
-            const res = await fetch(currentUrl, { headers, cache: 'no-store' });
-            if (!res.ok) throw new Error(`Status ${res.status}`);
-            const bundle = await res.json();
-            if (bundle && bundle.entry) {
-                results.push(...bundle.entry.map((e: any) => e.resource));
-            }
-            
-            const nextLink = bundle.link?.find((l: any) => l.relation === "next");
-            if (nextLink && nextLink.url) {
-                currentUrl = nextLink.url;
-            } else {
-                break;
-            }
-        }
-    } catch (e) {
-        console.error("FHIR FetchAll Error:", e);
+    while (currentUrl && all.length < max) {
+        const bundle = await fetchFhir(currentUrl, accessToken, sid, indicatorName);
+        const entries = bundle.entry?.map((e: any) => e.resource) || [];
+        all = all.concat(entries);
+
+        const nextLink = bundle.link?.find((l: any) => l.relation === 'next')?.url;
+        currentUrl = nextLink;
+        if (!nextLink) break;
+    }
+    return all;
+}
+
+async function fetchByIds(baseUrl: string, type: string, ids: string[], accessToken: string, sid?: string, indicatorName?: string) {
+    if (ids.length === 0) return [];
+    const uniqueIds = Array.from(new Set(ids));
+    const results: any[] = [];
+
+    // FHIR supports long URLs but within limits; batch by 50
+    for (let i = 0; i < uniqueIds.length; i += 50) {
+        const batch = uniqueIds.slice(i, i + 50);
+        const url = `${baseUrl}/${type}?_id=${batch.join(',')}`;
+        const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
+        results.push(...(bundle.entry?.map((e: any) => e.resource) || []));
     }
     return results;
 }
 
-async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], accessToken?: string | null) {
-    if (!ids.length) return [];
-    const uniqueIds = Array.from(new Set(ids));
-    
-    // 將 ID 列表拆分為每 50 個一組的 Chunk
-    const chunks: string[][] = [];
-    for (let i = 0; i < uniqueIds.length; i += 50) {
-        chunks.push(uniqueIds.slice(i, i + 50));
-    }
-
-    // 使用 Promise.all 並行抓取所有 Chunk，大幅縮短執行時間
-    const results = await Promise.all(chunks.map(async (chunk) => {
-        const idsStr = chunk.join(",");
-        const data = await fetchFhir(`${baseUrl}/${resourceType}?_id=${idsStr}&_count=50`, accessToken);
-        return data?.entry?.map((e: any) => e.resource) || [];
-    }));
-
-    return results.flat();
-}
-
 function getValueByPath(obj: any, path: string) {
     if (!path) return undefined;
-    const parts = path.split('.');
+    
+    // 移除資源名稱前綴 (例如: Encounter.status -> status)
+    const resourceTypes = ['Patient', 'Encounter', 'Procedure', 'Observation', 'MedicationAdministration', 'Practitioner', 'Organization'];
+    let cleanPath = path;
+    for (const type of resourceTypes) {
+        if (path.startsWith(type + '.')) {
+            cleanPath = path.substring(type.length + 1);
+            break;
+        }
+    }
+
+    const parts = cleanPath.split('.');
     let current = obj;
     for (const part of parts) {
         if (current === undefined || current === null) return undefined;
         if (Array.isArray(current)) {
-            current = current.map(c => c[part]).flat();
+            // 如果是陣列，嘗試展開並尋找符合的部分
+            current = current.map(c => c[part]).flat().filter(v => v !== undefined && v !== null);
         } else {
             current = current[part];
         }
     }
+    
+    // 如果結果仍是陣列且只有一個元素，回傳該元素
+    if (Array.isArray(current) && current.length === 1) return current[0];
     return current;
 }
 
@@ -200,8 +198,8 @@ export async function getFhirRecordCount(indicatorName: string) {
         }
 
         // We don't need backend auth for summary=count on most sandboxes, but let's be safe
-        let accessToken = null;
-        try { accessToken = await getBackendAccessToken(activeFhirUrl); } catch (e) {}
+        let accessToken = "";
+        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e) {}
 
         const res = await fetchFhir(url, accessToken);
         return { success: true, count: res?.total || 0, resourceType: baseResource };
@@ -235,9 +233,9 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         await supabase.from("kpi_detail").delete().eq("kpi_id", kpi.kpiid);
         await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
 
-        let accessToken = null;
+        let accessToken = "";
         try { 
-            accessToken = await getBackendAccessToken(activeFhirUrl); 
+            accessToken = await getBackendAccessToken(activeFhirUrl) || ""; 
             if (accessToken) await addSyncLog(sid, "已取得後端存取權限令牌 (JWT)", "info", indicatorName);
         } catch (e) {}
 
@@ -261,7 +259,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         }
 
         await addSyncLog(sid, `向 FHIR API 請求基礎資料 (${baseResource})...`, "info", indicatorName);
-        let resources = await fetchFhirAll(url, 10000, accessToken); 
+        let resources = await fetchFhirAll(url, 10000, accessToken, sid, indicatorName); 
         if (!resources || resources.length === 0) {
             await addSyncLog(sid, "無符合指標時間範圍的 FHIR 資料。", "warning", indicatorName);
             return { success: true, message: "無符合資料。" };
@@ -269,22 +267,68 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         await addSyncLog(sid, `取得 ${resources.length} 筆原始資料，開始處理關聯資訊...`, "info", indicatorName);
 
         const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
-        const encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id);
         const pracIds = resources.map((r: any) => {
             if (r.performer?.[0]?.actor?.reference) return r.performer[0].actor.reference.split(/[:\/]/).pop();
             return null;
         }).filter((id: string) => !!id);
 
-        await addSyncLog(sid, `正在抓取關聯資源 (Patient: ${patIds.length}, Encounter: ${encIds.length}, Practitioner: ${pracIds.length})...`, "info", indicatorName);
-        const [patData, encData, pracData] = await Promise.all([
-            fetchByIds(activeFhirUrl, "Patient", patIds, accessToken),
-            fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken),
-            fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken)
-        ]);
+        let encIds: string[] = [];
+        if (baseResource === 'Encounter') {
+            encIds = resources.map((r: any) => r.id).filter((id: string) => !!id);
+        } else {
+            encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id);
+        }
+
+        const needsObservations = ftInf?.some(f => f.fhir_source.includes('Observation'));
+        const needsMedications = ftInf?.some(f => f.fhir_source.includes('Medication'));
+
+        await addSyncLog(sid, `正在抓取關聯資源 (Patient: ${patIds.length}, Encounter: ${encIds.length}, Practitioner: ${pracIds.length})${needsObservations ? ', Observation: 請求中' : ''}...`, "info", indicatorName);
+        
+        const fetchPromises: Promise<any>[] = [
+            fetchByIds(activeFhirUrl, "Patient", patIds, accessToken, sid, indicatorName),
+            fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken, sid, indicatorName),
+            fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken, sid, indicatorName)
+        ];
+
+        if (needsObservations && encIds.length > 0) {
+            fetchPromises.push(fetchFhirAll(`${activeFhirUrl}/Observation?encounter=${encIds.slice(0, 100).join(',')}`, 1000, accessToken, sid, indicatorName));
+        } else {
+            fetchPromises.push(Promise.resolve([]));
+        }
+
+        if (needsMedications && encIds.length > 0) {
+            fetchPromises.push(fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?encounter=${encIds.slice(0, 100).join(',')}`, 1000, accessToken, sid, indicatorName));
+        } else {
+            fetchPromises.push(Promise.resolve([]));
+        }
+
+        const [patData, encData, pracData, obsData, medData] = await Promise.all(fetchPromises);
 
         const patMap = new Map(patData.map((p: any) => [p.id, p]));
         const encMap = new Map(encData.map((e: any) => [e.id, e]));
         const pracMap = new Map(pracData.map((p: any) => [p.id, p]));
+        
+        const obsMap = new Map();
+        if (obsData) {
+            obsData.forEach((o: any) => {
+                const eid = o.encounter?.reference?.split('/').pop();
+                if (eid) {
+                    if (!obsMap.has(eid)) obsMap.set(eid, []);
+                    obsMap.get(eid).push(o);
+                }
+            });
+        }
+        
+        const medMap = new Map();
+        if (medData) {
+            medData.forEach((m: any) => {
+                const eid = m.encounter?.reference?.split('/').pop();
+                if (eid) {
+                    if (!medMap.has(eid)) medMap.set(eid, []);
+                    medMap.get(eid).push(m);
+                }
+            });
+        }
 
         await addSyncLog(sid, `關聯資料抓取完畢，開始套用指標公式計算...`, "info", indicatorName);
 
@@ -304,11 +348,33 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
 
         for (const res of denominatorSet) {
             const patId = res.subject?.reference?.split('/').pop();
-            const encId = res.encounter?.reference?.split('/').pop();
+            let encId = res.encounter?.reference?.split('/').pop();
+            if (baseResource === 'Encounter' && !encId) encId = res.id;
+
             const patient: any = patMap.get(patId);
             const encounter: any = encMap.get(encId);
+            const myObs = encId ? obsMap.get(encId) || [] : [];
+            const myMeds = encId ? medMap.get(encId) || [] : [];
+
             if (!patient) continue;
 
+            // 提取元數據 (Metadata)
+            let deptName = encounter?.serviceProvider?.display || "一般外科";
+            if (!encounter?.serviceProvider?.display && encounter?.serviceProvider?.reference) {
+                deptName = encounter.serviceProvider.reference.split('/').pop() || "一般外科";
+            }
+            
+            let doctorName = "王大明";
+            let doctorId = "H85585021721";
+            if (res.performer?.[0]?.actor?.reference) {
+                const refId = res.performer[0].actor.reference.split(/[:\/]/).pop();
+                doctorId = refId || doctorId;
+                const prac = pracMap.get(refId);
+                doctorName = prac?.name?.[0]?.text || refId || doctorName;
+            }
+
+            const reportDate = res.performedPeriod?.end || res.period?.end || res.effectiveDateTime || new Date().toISOString();
+            
             let isNumerator = false;
             let abnormalReason = null;
             const isMortality = indicatorName.includes("死亡率");
@@ -359,29 +425,40 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             const ftData: Record<string, any> = {};
             if (ftInf && ftInf.length > 0) {
                 for (const f of ftInf) {
-                    const val = getValueByPath(res, f.fhir_source) || getValueByPath(patient, f.fhir_source) || getValueByPath(encounter, f.fhir_source);
+                    let val = undefined;
+                    
+                    // 1. 嘗試從基礎資源提取
+                    val = getValueByPath(res, f.fhir_source);
+                    
+                    // 2. 嘗試從關聯資源提取
+                    if (val === undefined || val === null) val = getValueByPath(patient, f.fhir_source);
+                    if (val === undefined || val === null) val = getValueByPath(encounter, f.fhir_source);
+                    
+                    // 3. 處理 Observation 特殊邏輯 (例如: Observation.code.text = 'XXX')
+                    if ((val === undefined || val === null) && f.fhir_source.includes('Observation')) {
+                        if (f.fhir_source.includes('=') && f.fhir_source.includes('value')) {
+                            // 簡易匹配: Observation.code.text = 'Emergency Triage Level' and valueString
+                            const matches = f.fhir_source.match(/['"](.*?)['"]/);
+                            const targetText = matches ? matches[1] : '';
+                            const obs = myObs.find((o: any) => {
+                                const codeText = o.code?.text || o.code?.coding?.[0]?.display;
+                                return codeText === targetText;
+                            });
+                            if (obs) {
+                                if (f.fhir_source.includes('valueString')) val = obs.valueString;
+                                else if (f.fhir_source.includes('valueInteger')) val = obs.valueInteger;
+                                else if (f.fhir_source.includes('valueQuantity')) val = obs.valueQuantity?.value;
+                            }
+                        } else {
+                            val = getValueByPath(myObs[0], f.fhir_source);
+                        }
+                    }
+                    
                     if (val !== undefined && val !== null && f.column_slot) {
                         ftData[f.column_slot] = String(val);
                     }
                 }
             }
-
-            let deptName = "一般外科";
-            if (encounter?.serviceProvider?.display) deptName = encounter.serviceProvider.display;
-            else if (encounter?.serviceProvider?.reference) deptName = encounter.serviceProvider.reference.split('/').pop() || "一般外科";
-
-            let doctorName = "王大明";
-            let doctorId = "H85585021721";
-            if (res.performer?.[0]?.actor?.reference) {
-                const refId = res.performer[0].actor.reference.split(/[:\/]/).pop();
-                doctorId = refId || doctorId;
-                const prac = pracMap.get(refId);
-                doctorName = prac?.name?.[0]?.text || refId || doctorName;
-            }
-
-            const reportDate = res.performedPeriod?.end || res.effectiveDateTime || new Date().toISOString();
-            const isPositiveKPI = indicatorName.includes("給予比率") || indicatorName.includes("達成率");
-            let status = isPositiveKPI ? (isNumerator ? "正常" : "異常") : (isNumerator ? "異常" : "正常");
 
             const detail = {
                 kpi_id: kpi.kpiid,
@@ -473,14 +550,12 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
 // Legacy wrapper (optional, but keep for fallback)
 export async function syncFhirData() {
     const { data: indicators } = await getSyncIndicators();
-    if (!indicators) return { success: false, message: "無法取得指標內容" };
-    
-    // Clear only if needed, but per the updated logic, we now do it per indicator.
-    // For legacy single call, we might want to clear all? 
-    // Actually, user said skip global reset.
+    if (!indicators || !Array.isArray(indicators)) return { success: false, message: "無法取得指標內容" };
     
     for (const name of indicators) {
-        await syncFhirIndicatorBatch(name);
+        if (typeof name === 'string') {
+            await syncFhirIndicatorBatch(name);
+        }
     }
     return { success: true, message: "同步作業已全數完成 (批次處理)" };
 }
