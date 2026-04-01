@@ -122,24 +122,55 @@ async function fetchFhir(url: string, accessToken: string, sid?: string, indicat
     return data;
 }
 
-async function fetchFhirAll(url: string, max: number = 1000, accessToken: string, sid?: string, indicatorName?: string) {
-    let all: any[] = [];
+/**
+ * Helper: Extract the most relevant date from various FHIR resources
+ */
+function extractResourceDate(res: any): string {
+    // Priority 1: Clinical event time
+    const clinicalDate = res.performedDateTime || 
+                         res.performedPeriod?.end || 
+                         res.performedPeriod?.start ||
+                         res.period?.end || 
+                         res.period?.start ||
+                         res.occurrenceDateTime || 
+                         res.effectiveDateTime ||
+                         res.authoredOn;
+    
+    if (clinicalDate) return String(clinicalDate).split('T')[0];
+    
+    // Priority 2: Meta last updated (as fallback for "when this happened")
+    if (res.meta?.lastUpdated) return String(res.meta.lastUpdated).split('T')[0];
+
+    return "1970-01-01"; // Generic fallback to identify records with missing dates
+}
+
+async function fetchFhirAll(url: string, max: number = 100000, accessToken: string, sid?: string, indicatorName?: string) {
+    let allMap = new Map<string, any>();
     let currentUrl = url;
-    while (currentUrl && all.length < max) {
+    let totalFetched = 0;
+
+    while (currentUrl && totalFetched < max) {
         const bundle = await fetchFhir(currentUrl, accessToken, sid, indicatorName);
         const entries = bundle.entry?.map((e: any) => e.resource) || [];
-        all = all.concat(entries);
+        
+        for (const r of entries) {
+            if (r.id && !allMap.has(r.id)) {
+                allMap.set(r.id, r);
+                totalFetched++;
+            }
+        }
+
         const nextLink = bundle.link?.find((l: any) => l.relation === 'next')?.url;
         currentUrl = nextLink;
         if (!nextLink) break;
     }
-    return all;
+    return Array.from(allMap.values());
 }
 
 async function fetchByIds(baseUrl: string, type: string, ids: string[], accessToken: string, sid?: string, indicatorName?: string) {
     if (ids.length === 0) return [];
-    const uniqueIds = Array.from(new Set(ids));
-    const results: any[] = [];
+    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
+    const resultsMap = new Map<string, any>();
     const batches = [];
     for (let i = 0; i < uniqueIds.length; i += 20) batches.push(uniqueIds.slice(i, i + 20));
 
@@ -147,15 +178,17 @@ async function fetchByIds(baseUrl: string, type: string, ids: string[], accessTo
         const url = `${baseUrl}/${type}?_id=${batch.join(',')}&_count=1000`;
         try {
             const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
-            return bundle.entry?.map((e: any) => e.resource) || [];
+            const resources = bundle.entry?.map((e: any) => e.resource) || [];
+            resources.forEach((r: any) => {
+                if (r.id) resultsMap.set(r.id, r);
+            });
         } catch (e) {
-            return [];
+            // silent fail for specific batch
         }
     });
 
-    const resultsArray = await Promise.all(fetchPromises);
-    resultsArray.forEach(batchResults => results.push(...batchResults));
-    return results;
+    await Promise.all(fetchPromises);
+    return Array.from(resultsMap.values());
 }
 
 function getValueByPath(obj: any, path: string) {
@@ -173,7 +206,7 @@ function getValueByPath(obj: any, path: string) {
     for (const part of parts) {
         if (current === undefined || current === null) return undefined;
         if (Array.isArray(current)) {
-            current = current.map(c => c[part]).flat().filter(v => v !== undefined && v !== null);
+            current = current.map(c => c[part]).flat().filter(id => id !== undefined && id !== null);
         } else {
             current = current[part];
         }
@@ -244,13 +277,13 @@ interface SyncResult {
 // Phase 3: Sync a single indicator batch (Integrity V5: Incremental Updates)
 export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string): Promise<SyncResult> {
     const sid = sessionId || crypto.randomUUID();
-    console.log(`[Sync] Starting Integrity V5 batch for ${indicatorName} (ID: ${sid})`);
+    console.log(`[Sync] Starting Integrity V6 batch for ${indicatorName} (ID: ${sid})`);
     const TIMEOUT_MS = 55000; // 55 seconds to stay under 60s platform limits
     
     const syncLogic = async () => {
         const supabase = await createClient();
         const START_DATE = getStartDate();
-        await addSyncLog(sid, `🚀 開始同步指標：「${indicatorName}」 (模式: V5 增量同步)`, "info", indicatorName);
+        await addSyncLog(sid, `🚀 開始同步指標：「${indicatorName}」 (模式: V6 穩定優化版)`, "info", indicatorName);
 
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
         const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
@@ -262,7 +295,13 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpiDef.kpiid).order('seq')
         ]);
         
-        await addSyncLog(sid, `正在初始化資料空間...`, "info", indicatorName);
+        await addSyncLog(sid, `正在清理舊有數據...`, "info", indicatorName);
+        // Clean BOTH tables to ensure no "GHOST" records
+        const { data: detailsToDelete } = await supabase.from("kpi_detail").select("id").eq("kpi_id", kpiDef.kpiid);
+        if (detailsToDelete && detailsToDelete.length > 0) {
+            const ids = detailsToDelete.map(d => d.id);
+            await supabase.from("kpi_ft_detail").delete().in("kpi_detail_id", ids);
+        }
         await supabase.from("kpi_detail").delete().eq("kpi_id", kpiDef.kpiid);
         await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
 
@@ -281,7 +320,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
 
         const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=500`;
         await addSyncLog(sid, `正在讀取基礎資源 (${baseResource})...`, "info", indicatorName);
-        const resources = await fetchFhirAll(url, 10000, accessToken, sid, indicatorName); 
+        const resources = await fetchFhirAll(url, 100000, accessToken, sid, indicatorName); 
 
         if (!resources || resources.length === 0) {
             await addSyncLog(sid, "查無相關資料。", "warning", indicatorName);
@@ -294,7 +333,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             return res;
         };
 
-        const chunks = subChunks(resources, 100);
+        const chunks = subChunks(resources, 80); // Reduced chunk size slightly for high-concurrency safety
         let processedCount = 0;
 
         for (const chunk of chunks) {
@@ -312,13 +351,13 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             ];
 
             if (needsObs && encIds.length > 0) {
-                const obsTasks = subChunks(encIds, 50).map(c => () => fetchFhirAll(`${activeFhirUrl}/Observation?encounter=${c.join(',')}&_count=1000`, 1000, accessToken, sid, indicatorName));
-                fetchPromises.push(promiseLimit(obsTasks, 3).then(r => r.flat()));
+                const obsTasks = subChunks(encIds, 40).map(c => () => fetchFhirAll(`${activeFhirUrl}/Observation?encounter=${c.join(',')}&_count=1000`, 1000, accessToken, sid, indicatorName));
+                fetchPromises.push(promiseLimit(obsTasks, 2).then(r => r.flat()));
             } else fetchPromises.push(Promise.resolve([]));
 
             if (needsMeds && encIds.length > 0) {
-                const medTasks = subChunks(encIds, 50).map(c => () => fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?context=${c.join(',')}&_count=1000`, 1000, accessToken, sid, indicatorName));
-                fetchPromises.push(promiseLimit(medTasks, 3).then(r => r.flat()));
+                const medTasks = subChunks(encIds, 40).map(c => () => fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?context=${c.join(',')}&_count=1000`, 1000, accessToken, sid, indicatorName));
+                fetchPromises.push(promiseLimit(medTasks, 2).then(r => r.flat()));
             } else fetchPromises.push(Promise.resolve([]));
 
             const [pats, encs, pracs, obss, meds] = await Promise.all(fetchPromises);
@@ -352,13 +391,14 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                 }
 
                 const dId = res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
-                const dName = (pracMap.get(dId) as any)?.name?.[0]?.text || dId;
+                const practitioner = pracMap.get(dId) as any;
+                const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
                 const dept = encounter?.serviceProvider?.display || "一般外科";
-                const dDate = res.performedPeriod?.end || res.period?.end || new Date().toISOString();
+                const dDate = extractResourceDate(res);
 
                 const detailId = crypto.randomUUID();
                 batchDetails.push({
-                    id: detailId, kpi_id: kpiDef.kpiid, data_date: dDate.split('T')[0],
+                    id: detailId, kpi_id: kpiDef.kpiid, data_date: dDate,
                     department: dept, doctor_id: dId, doctor_name: dName,
                     hospital_id: "台北綜合醫院", patient_id: pId, patient_gender: patient.gender,
                     patient_birth_date: patient.birthDate, numerator_value: isNumerator ? 1 : 0,
@@ -369,7 +409,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                     const ftRow: any = { kpi_detail_id: detailId };
                     for (const f of ftInf) {
                         let val = getValueByPath(res, f.fhir_source) || getValueByPath(patient, f.fhir_source) || getValueByPath(encounter, f.fhir_source);
-                        if (f.column_slot) ftRow[f.column_slot] = String(val || "N/A");
+                        if (f.column_slot) ftRow[f.column_slot] = String(val || "-");
                     }
                     batchFtDetails.push(ftRow);
                 }
@@ -397,9 +437,9 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                 }
             }
             processedCount += chunk.length;
-            await addSyncLog(sid, `進度：${processedCount}/${resources.length} 筆已完成並更新至報表...`, "info", indicatorName);
+            await addSyncLog(sid, `✅ 進度：${processedCount}/${resources.length} 筆 (含採集與彙整)...`, "info", indicatorName);
         }
-        await addSyncLog(sid, `✅ 同步成功完成！總計處理 ${resources.length} 筆資料。`, "success", indicatorName);
+        await addSyncLog(sid, `🎉 同步完美完成！總計處理 ${resources.length} 筆唯一資料。`, "success", indicatorName);
         return { success: true, count: resources.length };
     };
 

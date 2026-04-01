@@ -89,21 +89,21 @@ export function AbnormalTable({ items, title }: AbnormalTableProps) {
                                 <TableCell>{item.patient_gender === 'male' ? '男' : item.patient_gender === 'female' ? '女' : item.patient_gender || '-'}</TableCell>
                                 <TableCell>{calculateAge(item.patient_birthday) ?? item.patient_age ?? '-'}</TableCell>
                                 <TableCell>
-                                    {item.admission_date ? new Date(item.admission_date).toLocaleDateString('zh-TW', {
+                                    {(item.admission_date && item.admission_date !== "-") ? new Date(item.admission_date).toLocaleDateString('zh-TW', {
                                         year: 'numeric',
                                         month: '2-digit',
                                         day: '2-digit'
                                     }) : '-'}
                                 </TableCell>
                                 <TableCell>
-                                    {item.discharge_date ? new Date(item.discharge_date).toLocaleDateString('zh-TW', {
+                                    {(item.discharge_date && item.discharge_date !== "-") ? new Date(item.discharge_date).toLocaleDateString('zh-TW', {
                                         year: 'numeric',
                                         month: '2-digit',
                                         day: '2-digit'
                                     }) : '-'}
                                 </TableCell>
                                 <TableCell className="font-medium">
-                                    {item.op_end ? new Date(item.op_end).toLocaleString('zh-TW', {
+                                    {(item.op_end && item.op_end !== "-") ? new Date(item.op_end).toLocaleString('zh-TW', {
                                         year: 'numeric',
                                         month: '2-digit',
                                         day: '2-digit',

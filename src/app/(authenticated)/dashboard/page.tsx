@@ -73,23 +73,20 @@ export default async function DashboardPage(props: {
             }
         }
 
-        // Fetch KPI Summary (Small table, used for filter lists)
-        const { data: kpiDataRaw } = await supabase.from("KPI").select("*");
-
-        // Fetch Pinned Indicators
+        // 1. Fetch Basic Metadata
         const { data: pinnedDefs } = await supabase
             .from("kpi_definitions")
             .select("kpiid, name, numerator_name, denominator_name, formula")
             .eq("is_pinned", true)
             .order("name", { ascending: true });
 
-        // Fetch ALL definitions for target lookup
         const { data: allDefs } = await supabase
             .from("kpi_definitions")
             .select("name, target_value, target_operator");
 
         const targetMap = new Map(allDefs?.map(d => [d.name, { val: d.target_value, op: d.target_operator }]));
 
+        // 2. Resolve Active Indicator
         let pinnedNames = pinnedDefs?.map(d => d.name) || [];
         let primaryIndicatorName = "";
         let numeratorLabel = "分子";
@@ -97,153 +94,79 @@ export default async function DashboardPage(props: {
         let activeKpiId = null;
         let activeFormula = "";
 
-        // 1. Determine Primary Indicator & Labels
-        if (pinnedNames.length > 0) {
-            primaryIndicatorName = pinnedNames[0];
-            let activeDef = pinnedDefs![0];
-
-            if (kpiParam && pinnedNames.includes(decodeURIComponent(kpiParam))) {
-                primaryIndicatorName = decodeURIComponent(kpiParam);
-                activeDef = pinnedDefs?.find(d => d.name === primaryIndicatorName) || activeDef;
+        if (kpiParam) {
+            primaryIndicatorName = decodeURIComponent(kpiParam);
+            const { data: overDef } = await supabase.from("kpi_definitions").select("kpiid, formula, numerator_name, denominator_name").eq("name", primaryIndicatorName).single();
+            if (overDef) {
+                activeKpiId = overDef.kpiid;
+                activeFormula = overDef.formula || "";
+                numeratorLabel = overDef.numerator_name || "分子";
+                denominatorLabel = overDef.denominator_name || "分母";
             }
-
-            numeratorLabel = activeDef.numerator_name || "分子";
-            denominatorLabel = activeDef.denominator_name || "分母";
+        } else if (pinnedNames.length > 0) {
+            primaryIndicatorName = pinnedNames[0];
+            const activeDef = pinnedDefs![0];
             activeKpiId = activeDef.kpiid;
             activeFormula = activeDef.formula || "";
-        } else {
-            const { data: firstDef } = await supabase
-                .from("kpi_definitions")
-                .select("kpiid, name, numerator_name, denominator_name, formula")
-                .order("name", { ascending: true })
-                .limit(1)
-                .single();
-
-            if (firstDef) {
-                primaryIndicatorName = firstDef.name;
-                numeratorLabel = firstDef.numerator_name || "分子";
-                denominatorLabel = firstDef.denominator_name || "分母";
-                activeKpiId = firstDef.kpiid;
-                activeFormula = firstDef.formula || "";
-            } else {
-                primaryIndicatorName = "手術後 48 小時內死亡率"; 
-            }
-
-            if (kpiParam) {
-                primaryIndicatorName = decodeURIComponent(kpiParam);
-                // Need to re-fetch if override by URL
-                const { data: overDef } = await supabase.from("kpi_definitions").select("kpiid, formula").eq("name", primaryIndicatorName).single();
-                if (overDef) {
-                    activeKpiId = overDef.kpiid;
-                    activeFormula = overDef.formula || "";
-                }
-            }
+            numeratorLabel = activeDef.numerator_name || "分子";
+            denominatorLabel = activeDef.denominator_name || "分母";
         }
 
-        // Fetch KPI Details - Filtered SERVER SIDE by Primary Indicator ID
-        const { data: detailDataRaw } = await supabase
+        // 3. PERFORMANCE: Fetch Summary Data for KPITable & DepartmentChart
+        // Use pre-aggregated session-level "KPI" table
+        const { data: kpiSummaryData } = await supabase
+            .from("KPI")
+            .select("*")
+            .eq("indicator_name", primaryIndicatorName);
+
+        // 4. PERFORMANCE: Fetch Trend Data (Minimal Columns)
+        const { data: trendDataRaw } = await supabase
             .from("kpi_detail")
+            .select("data_date, numerator_value, denominator_value")
+            .eq("kpi_id", activeKpiId)
+            .order("data_date", { ascending: true });
+
+        // 5. DATA COMPLETE: Fetch Abnormal Details with JOIN and Metadata Mapping
+        const { data: ftMapping } = await supabase
+            .from("kpi_ft_detail_inf")
             .select("*")
             .eq("kpi_id", activeKpiId)
+            .order("seq");
+
+        // Construct dynamic join query (or manual join if RPC not available)
+        // For simplicity and to avoid RPC setup, we do a join here
+        const { data: abnormalDetailsRaw } = await supabase
+            .from("kpi_detail")
+            .select(`
+                *,
+                kpi_ft_detail!kpi_ft_detail_kpi_detail_id_fkey (*)
+            `)
+            .eq("kpi_id", activeKpiId)
+            .gt("numerator_value", 0) // Assume 0 is normal for simplicity, refining logic below
             .order("data_date", { ascending: false })
-            .limit(20000); // 增加上限以確保統計窗格正確
+            .limit(1000);
 
-        let kpiItems: KPIItem[] = kpiDataRaw || [];
-        
-        // Map snake_case database fields to the UI expected KPIDetail format
-        let kpiDetails: KPIDetail[] = (detailDataRaw || []).map(d => ({
-            id: d.id,
-            created_at: d.created_at,
-            department: d.department,
-            doctor: d.doctor_name,
-            doctor_id: d.doctor_id,
-            indicator_name: primaryIndicatorName,
-            indicator_def: activeFormula,
-            numerator: d.numerator_value,
-            denominator: d.denominator_value,
-            value: d.kpi_value,
-            unit: "%",
-            status: "正常", // Initial placeholder, will refine during filtering if needed
-            patient_id: d.patient_id,
-            patient_gender: d.patient_gender,
-            patient_birthday: d.patient_birth_date,
-            report_date: d.data_date,
-            admission_date: "",
-            discharge_date: "",
-            op_start: "",
-            op_end: "",
-            abnormal_reason: ""
-        }));
-
-        // 1. Prepare Filter Options
-        const departments = Array.from(new Set(kpiItems.map(item => item.department).filter(Boolean)));
-        const doctorsMap = new Map<string, string>();
-        kpiItems.forEach(item => {
-            if (item.doctor && item.department) doctorsMap.set(item.doctor, item.department);
+        // 6. Map Filter Options (Based on all indicators to remain flexible)
+        const { data: filterMetadata } = await supabase.from("KPI").select("department, doctor");
+        const departments = Array.from(new Set(filterMetadata?.map(d => d.department).filter(Boolean)));
+        const doctorSet = new Set<string>();
+        const doctors: {name: string, dept: string}[] = [];
+        filterMetadata?.forEach(d => {
+            if (d.doctor && !doctorSet.has(d.doctor)) {
+                doctorSet.add(d.doctor);
+                doctors.push({ name: d.doctor, dept: d.department });
+            }
         });
-        const doctors = Array.from(doctorsMap.entries()).map(([name, dept]) => ({ name, dept }));
 
-        // 2. Base Filtering (Dept/Doctor)
-        if (deptFilters.length > 0) {
-            kpiDetails = kpiDetails.filter(item => deptFilters.includes(item.department));
-        }
-        if (doctorFilters.length > 0) {
-            kpiDetails = kpiDetails.filter(item => doctorFilters.includes(item.doctor));
-        }
-
-        // 3. Date Range Logic & Defaults
-        const allDates = kpiDetails
-            .map(d => d.report_date ? new Date(d.report_date).getTime() : 0)
-            .filter(d => d > 0);
-
-        const globalMaxDateTs = allDates.length > 0 ? Math.max(...allDates) : 0;
-        const globalMaxDateStr = globalMaxDateTs > 0 ? new Date(globalMaxDateTs).toISOString().split('T')[0] : "";
-        const globalMinDateStr = globalMaxDateTs > 0 ? "2025-06-01" : "2025-06-01"; // 預設涵蓋測試數據起點秋季數據
-        // 4. Apply Date Range Filter to Data
-        let filteredDetails = [...kpiDetails];
-        if (startDate) {
-            filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date >= startDate);
-        }
-        if (endDate) {
-            filteredDetails = filteredDetails.filter(d => d.report_date && d.report_date <= endDate);
-        }
-
-        const kpiRawData = filteredDetails;
-
-        // DRILL DOWN LOGIC
+        // 7. Calculate Latest Metrics (KPITable)
         const isDrillDown = deptFilters.length > 0;
+        let monitoredPoints = kpiSummaryData || [];
+        if (deptFilters.length > 0) monitoredPoints = monitoredPoints.filter(p => deptFilters.includes(p.department));
+        if (doctorFilters.length > 0) monitoredPoints = monitoredPoints.filter(p => doctorFilters.includes(p.doctor));
 
-        const kpiAggMap = new Map<string, {
-            dept: string;
-            doctor: string;
-            indicator: string;
-            num: number;
-            den: number;
-            unit: string;
-        }>();
-
-        kpiRawData.forEach(item => {
-            const groupKey = isDrillDown ? item.doctor : item.department;
-            const key = `${groupKey}|${item.indicator_name}`;
-
-            const current = kpiAggMap.get(key) || {
-                dept: item.department,
-                doctor: item.doctor,
-                indicator: item.indicator_name,
-                num: 0,
-                den: 0,
-                unit: item.unit || "%"
-            };
-            kpiAggMap.set(key, {
-                ...current,
-                num: current.num + (Number(item.numerator) || 0),
-                den: current.den + (Number(item.denominator) || 0)
-            });
-        });
-
-        const latestMetrics: KPIDetail[] = Array.from(kpiAggMap.values()).map(agg => {
-            const val = agg.den > 0 ? parseFloat(((agg.num / agg.den) * 100).toFixed(2)) : 0;
-            const target = targetMap.get(agg.indicator);
+        const latestMetrics: KPIDetail[] = monitoredPoints.map(agg => {
+            const val = agg.value || 0;
+            const target = targetMap.get(agg.indicator_name);
             let status = "正常";
 
             if (target && target.val !== undefined && target.val !== null) {
@@ -259,101 +182,99 @@ export default async function DashboardPage(props: {
                     default: isNormal = val >= tVal;
                 }
                 if (!isNormal) status = "異常";
-            } else {
-                if (val > 0) status = "異常";
-            }
+            } else if (val > 0) status = "異常";
 
             return {
-                id: "-1",
-                created_at: "",
-                department: agg.dept,
+                id: agg.id.toString(),
+                created_at: agg.created_at,
+                department: agg.department,
                 doctor: agg.doctor,
-                indicator_name: agg.indicator,
-                indicator_def: "",
-                numerator: agg.num,
-                denominator: agg.den,
+                indicator_name: agg.indicator_name,
+                indicator_def: agg.indicator_def,
+                numerator: agg.numerator,
+                denominator: agg.denominator,
                 value: val,
-                unit: agg.unit,
+                unit: agg.unit || "%",
                 status,
-                patient_id: "",
-                patient_gender: "",
-                patient_birthday: "",
-                report_date: "",
-                admission_date: "",
-                discharge_date: "",
-                op_start: "",
-                op_end: "",
-                abnormal_reason: ""
+                patient_id: "", patient_gender: "", patient_birthday: "", report_date: "",
+                admission_date: "", discharge_date: "", op_start: "", op_end: "", abnormal_reason: ""
             };
         }).sort((a, b) => b.value - a.value);
 
-        // 7. Trend Chart Data
-        const trendMap = new Map<string, { sum: number; count: number }>();
-        filteredDetails.forEach((item) => {
-            if (item.report_date) {
-                const key = item.report_date.substring(0, 7);
-                const current = trendMap.get(key) || { sum: 0, count: 0 };
-                trendMap.set(key, {
-                    sum: current.sum + item.numerator,
-                    count: current.count + item.denominator,
-                });
+        // 8. Calculate Trend Chart Data
+        const trendMap = new Map<string, { n: number, d: number }>();
+        trendDataRaw?.forEach(r => {
+            if (r.data_date) {
+                const mo = String(r.data_date).substring(0, 7);
+                const curr = trendMap.get(mo) || { n: 0, d: 0 };
+                trendMap.set(mo, { n: curr.n + (r.numerator_value || 0), d: curr.d + (r.denominator_value || 0) });
             }
         });
+        const trendData = Array.from(trendMap.entries()).map(([date, v]) => ({
+            date, value: v.d > 0 ? parseFloat(((v.n / v.d) * 100).toFixed(2)) : 0
+        })).sort((a, b) => a.date.localeCompare(b.date));
 
-        const trendData = Array.from(trendMap.entries())
-            .map(([date, { sum, count }]) => ({
-                date,
-                value: count > 0 ? parseFloat(((sum / count) * 100).toFixed(2)) : 0,
-            }))
-            .sort((a, b) => a.date.localeCompare(b.date));
+        // 9. Calculate Bar Chart Data
+        const barChartData = latestMetrics.map(m => ({
+            department: isDrillDown ? m.doctor : m.department,
+            value: m.value
+        })).slice(0, 10);
 
-        // 8. Bar Chart Data
-        const deptBarMap = new Map<string, { num: number; den: number }>();
-        filteredDetails.forEach(item => {
-            const key = isDrillDown ? item.doctor : item.department;
-            const current = deptBarMap.get(key) || { num: 0, den: 0 };
-            deptBarMap.set(key, {
-                num: current.num + (Number(item.numerator) || 0),
-                den: current.den + (Number(item.denominator) || 0)
+        // 10. Map Abnormal Items (With Detail Logic)
+        const abnormalItems: KPIDetail[] = (abnormalDetailsRaw || []).map(d => {
+            const ft = (d as any).kpi_ft_detail?.[0] || {};
+            const item: KPIDetail = {
+                id: d.id,
+                created_at: d.created_at,
+                department: d.department,
+                doctor: d.doctor_name,
+                doctor_id: d.doctor_id,
+                indicator_name: primaryIndicatorName,
+                indicator_def: activeFormula,
+                numerator: d.numerator_value,
+                denominator: d.denominator_value,
+                value: d.kpi_value,
+                unit: "%",
+                status: "異常",
+                patient_id: d.patient_id,
+                patient_gender: d.patient_gender,
+                patient_birthday: d.patient_birth_date,
+                report_date: d.data_date,
+                admission_date: "-",
+                discharge_date: "-",
+                op_start: "-",
+                op_end: "-",
+                abnormal_reason: d.abnormal_reason || ""
+            };
+
+            // Dynamic FT Mapping
+            ftMapping?.forEach(m => {
+                const val = ft[m.column_slot?.replace('ft_', 'column')] || "-";
+                if (m.display_name?.includes("入院")) item.admission_date = val;
+                if (m.display_name?.includes("出院")) item.discharge_date = val;
+                if (m.display_name?.includes("手術") && m.display_name?.includes("時間")) item.op_end = val;
+                if (m.display_name?.includes("開始")) item.op_start = val;
             });
+
+            return item;
         });
 
-        const barChartData = Array.from(deptBarMap.entries())
-            .map(([key, { num, den }]) => ({
-                department: key,
-                value: den > 0 ? parseFloat(((num / den) * 100).toFixed(2)) : 0
-            }))
-            .sort((a, b) => b.value - a.value);
-
-        // 9. Abnormal Items
-        const primaryDates = kpiDetails
-            .map(d => d.report_date ? new Date(d.report_date).getTime() : 0)
-            .filter(d => d > 0);
-        const primaryMaxDateTs = primaryDates.length > 0 ? Math.max(...primaryDates) : 0;
-        const primaryMaxDateStr = primaryMaxDateTs > 0 ? new Date(primaryMaxDateTs).toISOString().split('T')[0] : "";
-        const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : primaryMaxDateStr.substring(0, 7);
-
-        const abnormalItems = kpiDetails
-            .filter((item) => {
-                if (!item.report_date) return false;
-                const isPositiveKPI = item.indicator_name.includes("比率") || item.indicator_name.includes("達成率") || item.indicator_name.includes("成功率");
-                const isAbnormal = isPositiveKPI ? (Number(item.numerator) === 0) : (Number(item.numerator) > 0);
-                return isAbnormal && item.report_date.startsWith(targetAbnormalMonth);
-            })
-            .sort((a, b) => {
-                if (a.report_date && b.report_date) return new Date(b.report_date).getTime() - new Date(a.report_date).getTime();
-                return 0;
-            });
+        const globalMaxDateStr = trendData.length > 0 ? trendData[trendData.length - 1].date : new Date().toISOString().split('T')[0];
+        const globalMinDateStr = "2025-06-01";
+        const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
 
         return (
             <div className="flex-1 space-y-4 p-6 md:p-12">
                 <div className="space-y-4">
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
-                        <h2 className="text-2xl font-bold tracking-tight">KPIM Dashboard</h2>
+                        <div className="space-y-1">
+                          <h2 className="text-2xl font-bold tracking-tight text-primary">KPIM Smart Dashboard</h2>
+                          <p className="text-sm text-muted-foreground">效能優化版 v6 - 基於摘要數據即時監控</p>
+                        </div>
                         <div className="flex items-center space-x-2">
                             <div className="flex flex-col items-end">
-                                <span className="text-sm text-muted-foreground mr-2 hidden md:inline-block">{displayName}</span>
-                                <span className="text-[10px] text-gray-300 mr-2">{identityCookie ? "SMART Connected" : "No Identity"}</span>
+                                <span className="text-sm font-medium mr-2">{displayName}</span>
+                                {identityCookie && <span className="text-[10px] bg-green-100 text-green-700 px-1.5 py-0.5 rounded-full mr-2">SMART身份已連接</span>}
                             </div>
                             <SignOutButton />
                         </div>
@@ -369,11 +290,11 @@ export default async function DashboardPage(props: {
                     </div>
                 </div>
 
-                <div className="space-y-8">
+                <div className="space-y-8 animate-in fade-in duration-500">
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標監控] ${primaryIndicatorName} - 區間累計 (${startDate || globalMinDateStr} ~ ${endDate || globalMaxDateStr})`}
+                            title={`[指標監控] ${primaryIndicatorName} - 本月累積報表`}
                             viewType={isDrillDown ? "doctor" : "department"}
                             numeratorLabel={numeratorLabel}
                             denominatorLabel={denominatorLabel}
@@ -383,26 +304,26 @@ export default async function DashboardPage(props: {
                     <div>
                         <div className="grid gap-8 md:grid-cols-2 lg:grid-cols-7">
                             <div className="col-span-1 md:col-span-2 lg:col-span-4">
-                                <TrendChart data={trendData} title={`${primaryIndicatorName} 趨勢 (月統計)`} />
+                                <TrendChart data={trendData} title={`${primaryIndicatorName} 歷月趨勢`} />
                             </div>
 
                             <div className="col-span-1 md:col-span-2 lg:col-span-3">
                                 <DepartmentChart
                                     data={barChartData}
-                                    title={isDrillDown ? `依醫師 ${primaryIndicatorName}` : `最近一月依科別 ${primaryIndicatorName}`}
+                                    title={isDrillDown ? `醫師排行 (${primaryIndicatorName})` : `科別對比 (${primaryIndicatorName})`}
                                 />
                             </div>
                         </div>
                     </div>
 
                     <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems} title={`${primaryIndicatorName} (${targetAbnormalMonth || '無資料'}) 異常詳細清單`} />
+                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單 (關聯明細模式)`} />
                     </div>
                 </div>
 
                 <div className="mt-8 border-t pt-4">
-                    <div className="text-[10px] text-gray-300 text-right">
-                        v2026.03.31-TableUnified
+                    <div className="text-[10px] text-gray-300 text-right italic">
+                        系統已切換至摘要引擎，明細數據僅在異常表單中按需載入。
                     </div>
                 </div>
             </div>

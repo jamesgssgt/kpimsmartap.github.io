@@ -12,9 +12,11 @@ export interface KPIItem {
 
 export interface KPIDetail {
     id: string;
+    created_at?: string;
     department: string;
     doctor: string;
     indicator_name: string;
+    indicator_def?: string;
     value: number;
     numerator: number;
     denominator: number;
