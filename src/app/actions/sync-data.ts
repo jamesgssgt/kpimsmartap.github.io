@@ -56,12 +56,14 @@ const getStartDate = () => {
 
 async function fetchFhir(url: string, accessToken: string, sid?: string, indicatorName?: string) {
     if (sid) await addSyncLog(sid, `[FHIR] GET ${url.split('?')[0].split('/').pop()}...`, "info", indicatorName);
-    const res = await fetch(url, {
-        headers: {
-            'Authorization': `Bearer ${accessToken}`,
-            'Accept': 'application/fhir+json'
-        }
-    });
+    const headers: Record<string, string> = {
+        'Accept': 'application/fhir+json'
+    };
+    if (accessToken) {
+        headers['Authorization'] = `Bearer ${accessToken}`;
+    }
+    
+    const res = await fetch(url, { headers });
 
     if (!res.ok) {
         const errText = await res.text();
@@ -237,7 +239,9 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         try { 
             accessToken = await getBackendAccessToken(activeFhirUrl) || ""; 
             if (accessToken) await addSyncLog(sid, "已取得後端存取權限令牌 (JWT)", "info", indicatorName);
-        } catch (e) {}
+        } catch (e: any) {
+            await addSyncLog(sid, `無法取得 JWT 授權: ${e.message || "未知原因"}。將嘗試無授權訪問...`, "warning", indicatorName);
+        }
 
         const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
         const nums = kpiDlls?.filter(d => d.kpi_dl_type === 2) || [];
