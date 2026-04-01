@@ -10,8 +10,19 @@ import { SMART_CONFIG } from "@/utils/smart-conf";
 export async function addSyncLog(sessionId: string, message: string, status: 'info' | 'success' | 'warning' | 'error' = 'info', indicatorName?: string) {
     try {
         const supabase = await createClient();
+        
+        // Ensure sessionId is a valid UUID to prevent Postgres syntax errors
+        let validSessionId = sessionId;
+        const uuidRegex = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        if (!uuidRegex.test(sessionId)) {
+            // If not a UUID, we can't write to the session_id column in sync_logs
+            // We just log to console and return to avoid crashing the whole sync
+            console.warn(`[addSyncLog] Invalid UUID for sessionId: ${sessionId}. Message: ${message}`);
+            return;
+        }
+
         await supabase.from("sync_logs").insert({
-            session_id: sessionId,
+            session_id: validSessionId,
             message,
             status,
             indicator_name: indicatorName
@@ -238,18 +249,24 @@ export async function getFhirRecordCount(indicatorName: string) {
 
 // Phase 3: Sync a single indicator batch
 export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string) {
-    const sid = sessionId || "manual-sync";
-    try {
-        const supabase = await createClient();
-        const START_DATE = getStartDate();
+    const sid = sessionId || "00000000-0000-0000-0000-000000000000"; // Fallback to nil UUID
+    console.log(`[Sync] Starting batch for ${indicatorName} (ID: ${sid})`);
 
-        await addSyncLog(sid, `開始處理指標「${indicatorName}」`, "info", indicatorName);
+    // Internal timeout to provide better feedback than a generic platform 504/Unexpected Response
+    const TIMEOUT_MS = 25000; // 25 seconds (slightly less than Vercel's default 30s)
+    
+    const syncLogic = async () => {
+        try {
+            const supabase = await createClient();
+            const START_DATE = getStartDate();
 
-        const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
-        const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
+            await addSyncLog(sid, `開始處理指標「${indicatorName}」`, "info", indicatorName);
 
-        const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
-        if (!kpi) throw new Error("指標定義不存在");
+            const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
+            const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
+
+            const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
+            if (!kpi) throw new Error("指標定義不存在");
 
         await addSyncLog(sid, `正在讀取指標與動態欄位定義...`, "info", indicatorName);
         const [ { data: kpiDlls }, { data: ftInf } ] = await Promise.all([
@@ -583,10 +600,28 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             await addSyncLog(sid, `3. 完成寫入數量：${allDetails.length} 筆`, "success", indicatorName);
         }
 
-        return { success: true, message: `已完成: ${allDetails.length} 筆資料` };
-    } catch (e: any) {
-        await addSyncLog(sid, `指標「${indicatorName}」發生錯誤: ${e.message}`, "error", indicatorName);
-        return { success: false, message: e.message };
+            return { success: true, message: `已完成: ${allDetails.length} 筆資料` };
+        } catch (e: any) {
+            console.error(`[Sync] Error in ${indicatorName}:`, e);
+            await addSyncLog(sid, `指標「${indicatorName}」發生錯誤: ${e.message}`, "error", indicatorName);
+            return { success: false, message: e.message };
+        }
+    };
+
+    const timeoutPromise = new Promise<{ success: false, message: string }>((resolve) => {
+        setTimeout(() => {
+            resolve({ 
+                success: false, 
+                message: "同步超時：雲端平台執行時間過長，請確認網路狀況或縮小指標範圍重新嘗試。" 
+            });
+        }, TIMEOUT_MS);
+    });
+
+    try {
+        return await Promise.race([syncLogic(), timeoutPromise]);
+    } catch (criticalErr: any) {
+        console.error("[Sync] Critical fatal error:", criticalErr);
+        return { success: false, message: `系統致命錯誤: ${criticalErr.message}` };
     }
 }
 
