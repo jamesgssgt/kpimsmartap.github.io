@@ -394,3 +394,236 @@ export async function clearGeneratedData(mode: 'all' | 'mortality' | 'antibiotic
         return { success: false, message: "清除失敗: " + String(err) };
     }
 }
+
+export async function exportFHIRTestCases() {
+    try {
+        console.log("Starting massive export & DB sync (4000 cases)...");
+        const bundle = {
+            resourceType: "Bundle",
+            type: "transaction",
+            entry: [] as any[]
+        };
+
+        const addResource = (res: any) => {
+            bundle.entry.push({
+                fullUrl: `urn:uuid:${res.id}`,
+                resource: res,
+                request: {
+                    method: "PUT",
+                    url: `${res.resourceType}/${res.id}`
+                }
+            });
+        };
+
+        const supabase = await createClient();
+
+        const demoDocId = "dr-smart-demo";
+        const demoDocName = "林智明 (示範登入)";
+        
+        addResource({
+            resourceType: "Practitioner",
+            id: demoDocId,
+            name: [{ text: demoDocName }]
+        });
+
+        addResource({
+            resourceType: "PractitionerRole",
+            id: `pr-${demoDocId}`,
+            practitioner: { reference: `urn:uuid:${demoDocId}` },
+            organization: { reference: `urn:uuid:org-tp-gen` }
+        });
+
+        // Skip auth user creation for now to avoid complexity in this trigger
+        // Just clear existing data first
+        await supabase.from("KPI").delete().neq('id', -1);
+        await supabase.from("kpi_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
+        await supabase.from("kpi_ft_detail").delete().neq('id', '00000000-0000-0000-0000-000000000000');
+
+        const hospId = "org-tp-gen";
+        const hospName = "台北綜合醫院";
+        addResource({
+            resourceType: "Organization",
+            id: hospId,
+            name: hospName,
+            type: [{ text: "Hospital" }]
+        });
+
+        const departments = Object.entries(DEPT_TEMPLATE).map(([key, info]) => ({
+            id: `dept-${key.toLowerCase()}`,
+            name: info.name,
+            docs: info.docs.map((d, i) => ({ id: `doc-${key.toLowerCase()}-${i}`, name: d }))
+        }));
+        departments[0].docs.unshift({ id: demoDocId, name: demoDocName });
+
+        departments.forEach(dept => {
+            addResource({
+                resourceType: "Organization",
+                id: dept.id,
+                name: dept.name,
+                partOf: { reference: `urn:uuid:${hospId}` }
+            });
+            dept.docs.forEach((doc) => {
+                if(doc.id !== demoDocId) {
+                    addResource({
+                        resourceType: "Practitioner",
+                        id: doc.id,
+                        name: [{ text: doc.name }]
+                    });
+                    addResource({
+                        resourceType: "PractitionerRole",
+                        id: `pr-${doc.id}`,
+                        practitioner: { reference: `urn:uuid:${doc.id}` },
+                        organization: { reference: `urn:uuid:org-tp-gen` }
+                    });
+                }
+            });
+        });
+
+        const kpiDetailsBuffer: any[] = [];
+        const ftDataBuffer: any[] = [];
+        const TARGET_PER_INDICATOR = 500;
+        
+        // Fetch FT Definitions for all indicators beforehand
+        const { data: allFtInf } = await supabase.from("kpi_ft_detail_inf").select("*").order('seq');
+        const ftInfMap = new Map();
+        allFtInf?.forEach(f => {
+            if (!ftInfMap.has(f.kpi_id)) ftInfMap.set(f.kpi_id, []);
+            ftInfMap.get(f.kpi_id).push(f);
+        });
+
+        const indicators = [
+            { id: "mortality", name: "手術後 48 小時內死亡率", def: "麻醉開始後48小時內死亡(含AAD)" },
+            { id: "antibiotic", name: "預防性抗生素在手術劃刀前1小時內給予比率", def: "手術劃刀前1小時內給予預防性抗生素人次 / 手術人次 * 100%" }
+        ];
+
+        let globalCounter = 0;
+
+        for (const indicator of indicators) {
+            const { data: kpiDef } = await supabase.from("kpi_definitions").select("kpiid, formula").eq("name", indicator.name).single();
+            
+            for (let i = 0; i < TARGET_PER_INDICATOR; i++) {
+                globalCounter++;
+                const dept = departments[globalCounter % departments.length];
+                const doc = dept.docs[(globalCounter + i) % dept.docs.length]; 
+
+                const patId = `pat-sim-${globalCounter}`;
+                const gender = globalCounter % 2 === 0 ? "male" : "female";
+                const age = 30 + (globalCounter % 60);
+
+                const opStart = new Date(END_DATE.getTime() - (globalCounter % DAYS_BACK) * 24 * 60 * 60 * 1000);
+                const opEnd = new Date(opStart.getTime() + (1 + Math.random() * 3) * 60 * 60 * 1000);
+                const admissionDate = new Date(opStart.getTime() - (1 + Math.random() * 3) * 24 * 60 * 60 * 1000);
+
+                let isNumerator = false;
+                let deathTime = null;
+                let isDeceased = false;
+                let dischargeCode = "home";
+
+                if (indicator.id === "mortality") {
+                    const baseProb = ["dept-cardio", "dept-neuro"].includes(dept.id) ? 0.05 : 0.01;
+                    if (Math.random() < baseProb) { 
+                        isNumerator = true;
+                        isDeceased = true;
+                        deathTime = new Date(opEnd.getTime() + (Math.random() * 40 + 2) * 60 * 60 * 1000);
+                        dischargeCode = "exp";
+                    }
+                } else if (indicator.id === "antibiotic") {
+                    const baseProb = ["dept-ortho", "dept-ent"].includes(dept.id) ? 0.15 : 0.03;
+                    isNumerator = Math.random() > baseProb;
+                }
+
+                const dischargeDate = deathTime || new Date(opEnd.getTime() + (3 + Math.random() * 7) * 24 * 60 * 60 * 1000);
+                const birthStr = new Date(opStart.getTime() - age * 365.25 * 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+
+                addResource({
+                    resourceType: "Patient",
+                    id: patId,
+                    meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
+                    gender: gender,
+                    birthDate: birthStr,
+                    deceasedDateTime: isDeceased && deathTime ? deathTime.toISOString() : undefined,
+                    managingOrganization: { reference: `urn:uuid:org-tp-gen` }
+                });
+
+                const encId = `enc-sim-${globalCounter}`;
+                addResource({
+                    resourceType: "Encounter",
+                    id: encId,
+                    meta: { tag: [{ system: "http://kpim.tw", code: "kpim_test_data" }] },
+                    status: "finished",
+                    class: { code: "IMP" },
+                    subject: { reference: `urn:uuid:${patId}` },
+                    serviceProvider: { reference: `urn:uuid:${dept.id}`, display: dept.name },
+                    hospitalization: { dischargeDisposition: { coding: [{ code: dischargeCode }] } },
+                    period: {
+                        start: admissionDate.toISOString(),
+                        end: dischargeDate.toISOString()
+                    }
+                });
+
+                const detailRow = {
+                    kpi_id: kpiDef?.kpiid,
+                    data_date: opEnd.toISOString().split('T')[0],
+                    department: dept.name,
+                    doctor_id: doc.id,
+                    doctor_name: doc.name,
+                    hospital_id: hospName,
+                    patient_id: patId,
+                    patient_gender: gender,
+                    patient_birth_date: birthStr,
+                    numerator_value: isNumerator ? 1 : 0,
+                    denominator_value: 1,
+                    kpi_value: isNumerator ? 1 : 0
+                };
+                kpiDetailsBuffer.push(detailRow);
+
+                // 生成 FT 鑽取資料
+                const ftInf = ftInfMap.get(kpiDef?.kpiid);
+                if (ftInf && ftInf.length > 0) {
+                    const ftRow: any = { _patient_id: patId };
+                    ftInf.forEach((f: any) => {
+                        const path = f.fhir_source || '';
+                        let val = "N/A";
+                        if (path.includes("Patient.identifier")) val = patId.replace('pat-sim-', 'P');
+                        else if (path.includes("Patient.name")) val = `模擬病患 ${globalCounter}`;
+                        else if (path.includes("Procedure.code")) val = indicator.id === 'mortality' ? "OP-001" : "AB-101";
+                        else if (path.includes("Practitioner.name") || path.includes("performer")) val = doc.name;
+                        else if (path.includes("Organization") || path.includes("serviceType")) val = dept.name;
+                        else if (path.includes("start")) val = opStart.toLocaleString();
+                        else if (path.includes("end")) val = opEnd.toLocaleString();
+                        else if (path.includes("status")) val = "finished";
+                        if (f.column_slot) ftRow[f.column_slot] = val;
+                    });
+                    ftDataBuffer.push(ftRow);
+                }
+            }
+        }
+
+        const { data: insertedDetails, error: detailError } = await supabase
+            .from("kpi_detail")
+            .insert(kpiDetailsBuffer)
+            .select("id, patient_id");
+
+        if (detailError) throw detailError;
+
+        if (insertedDetails && insertedDetails.length > 0 && ftDataBuffer.length > 0) {
+            const idMap = new Map(insertedDetails.map(row => [row.patient_id, row.id]));
+            const ftToInsert = ftDataBuffer
+                .filter(fd => idMap.has(fd._patient_id))
+                .map(fd => {
+                    const { _patient_id, ...rest } = fd;
+                    return { kpi_detail_id: idMap.get(_patient_id), ...rest };
+                });
+            if (ftToInsert.length > 0) {
+                for (let i = 0; i < ftToInsert.length; i += 500) {
+                    await supabase.from("kpi_ft_detail").insert(ftToInsert.slice(i, i + 500));
+                }
+            }
+        }
+
+        return { success: true, data: bundle, message: `已匯出並同步 ${globalCounter} 筆數據` };
+    } catch (err) {
+        console.error(err);
+        return { success: false, message: "匯出失敗: " + String(err) };
+    }
+}
