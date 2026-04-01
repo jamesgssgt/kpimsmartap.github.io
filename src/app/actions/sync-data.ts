@@ -295,6 +295,26 @@ export async function getIndicatorInitialUrl(indicatorName: string) {
     }
 }
 
+export async function getFhirRecordCount(indicatorName: string) {
+    try {
+        const supabase = await createClient();
+        const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
+        const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
+        const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
+        if (!kpi) throw new Error(`指標「${indicatorName}」不存在`);
+        const { data: dls } = await supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).eq("kpi_dl_type", 1).order('seq');
+        let baseResource = dls?.[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
+        const START_DATE = getStartDate();
+        const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_summary=count`;
+        let accessToken = "";
+        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e) {}
+        const res = await fetchFhir(url, accessToken);
+        return { success: true, count: res?.total || 0, resourceType: baseResource };
+    } catch (e: any) {
+        return { success: false, message: e.message };
+    }
+}
+
 interface SyncResult {
     success: boolean;
     count?: number;

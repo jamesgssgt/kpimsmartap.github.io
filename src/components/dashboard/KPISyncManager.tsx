@@ -12,7 +12,7 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Loader2, RefreshCw } from "lucide-react";
-import { getSyncIndicators, getIndicatorInitialUrl, syncSinglePage, getSyncLogs, syncFhirData, releaseSyncLock } from "@/app/actions/sync-data";
+import { getSyncIndicators, getIndicatorInitialUrl, getFhirRecordCount, syncSinglePage, getSyncLogs, syncFhirData, releaseSyncLock } from "@/app/actions/sync-data";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 
@@ -98,6 +98,12 @@ export function KPISyncManager() {
                 const name = indicators[i];
                 setStatus(`正在準備同步指標：${name}`);
                 addLog(` indicador [${i + 1}/${indicators.length}]: ${name}`);
+
+                // 2.5 Optional: Get Total Count for display
+                const countRes = await getFhirRecordCount(name);
+                if (countRes.success) {
+                    addLog(`📊 預計處理筆數：${countRes.count} 筆 (${countRes.resourceType})`);
+                }
 
                 // 3. Get Initial URL for this indicator
                 const urlRes = await getIndicatorInitialUrl(name);
