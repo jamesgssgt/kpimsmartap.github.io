@@ -260,8 +260,8 @@ function evaluateCondition(resource: any, condition: any): boolean {
 interface SyncPageResult {
     success: boolean;
     nextUrl: string | null;
-    processedCount: number;
     totalProcessedSoFar: number;
+    pageIdx: number;
     message?: string;
 }
 
@@ -402,7 +402,7 @@ export async function syncSinglePage(
         const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
         const chunk = bundle.entry?.map((e: any) => e.resource) || [];
         if (chunk.length === 0) {
-            return { success: true, nextUrl: null, processedCount: 0, totalProcessedSoFar };
+            return { success: true, nextUrl: null, totalProcessedSoFar: 0, pageIdx: 1 };
         }
 
         // 2. Fetch Supporting Resources (Patients, etc.)
@@ -509,6 +509,12 @@ export async function syncSinglePage(
             }
         }
 
+        // 5. Get Real-Time Exact Count for this indicator
+        const { count: realCount } = await supabase
+            .from("kpi_detail")
+            .select("*", { count: 'exact', head: true })
+            .eq("kpi_id", kpiDef.kpiid);
+
         const nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
         
         // Recalculate summary every 5 pages or at end
@@ -516,14 +522,14 @@ export async function syncSinglePage(
             await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
         }
 
-        const newTotal = totalProcessedSoFar + chunk.length;
-        await addSyncLog(sid, `✅ 進度：${newTotal} 筆已完成 (第 ${pageIdx} 頁)...`, "info", indicatorName);
+        const newTotal = realCount || (totalProcessedSoFar + chunk.length);
+        await addSyncLog(sid, `✅ 進度：[庫存 ${newTotal} 筆] (Page ${pageIdx})...`, "info", indicatorName);
 
         return {
             success: true,
-            nextUrl,
-            processedCount: chunk.length,
-            totalProcessedSoFar: newTotal
+            nextUrl: nextUrl,
+            totalProcessedSoFar: newTotal,
+            pageIdx: pageIdx + 1
         };
     } catch (e: any) {
         await addSyncLog(sessionId, `🚨 分頁同步錯誤: ${e.message}`, "error", indicatorName);
