@@ -55,7 +55,11 @@ const getStartDate = () => {
 };
 
 async function fetchFhir(url: string, accessToken: string, sid?: string, indicatorName?: string) {
-    if (sid) await addSyncLog(sid, `[FHIR] GET ${url.split('?')[0].split('/').pop()}...`, "info", indicatorName);
+    const resourceType = url.split('?')[0].split('/').pop();
+    if (sid) {
+        const logMsg = indicatorName ? `[${indicatorName}] [FHIR] GET ${resourceType}...` : `[FHIR] GET ${resourceType}...`;
+        await addSyncLog(sid, logMsg, "info", indicatorName);
+    }
     const headers: Record<string, string> = {
         'Accept': 'application/fhir+json'
     };
@@ -100,6 +104,8 @@ async function fetchByIds(baseUrl: string, type: string, ids: string[], accessTo
     for (let i = 0; i < uniqueIds.length; i += 20) {
         const batch = uniqueIds.slice(i, i + 20);
         const url = `${baseUrl}/${type}?_id=${batch.join(',')}`;
+        const logPrefix = indicatorName ? `[${indicatorName}] ` : "";
+        if (sid) await addSyncLog(sid, `${logPrefix}正在抓取轄下 ${type} 關聯資料 (批次 ${i/20 + 1})...`, "info", indicatorName);
         try {
             const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
             results.push(...(bundle.entry?.map((e: any) => e.resource) || []));
