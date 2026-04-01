@@ -361,8 +361,8 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
         let baseResource = denoms[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
         
-        // STREAMING START
-        let nextUrl: string | null = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=500`;
+        // STREAMING START: V12.1 - Shrink batch to 100 for extreme stability
+        let nextUrl: string | null = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=100`;
         let totalProcessed = 0;
         let pageIdx = 0;
 
@@ -467,12 +467,14 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             totalProcessed += chunk.length;
             await addSyncLog(sid, `✅ 進度：${totalProcessed} 筆已完成 (Page ${pageIdx})...`, "info", indicatorName);
             
-            // Recalculate summary after each page for immediate dashboard update
-            await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
+            // Recalculate summary every 5 pages or at the end to balance performance
+            if (pageIdx % 5 === 0 || !bundle.link?.find((l: any) => l.relation === 'next')?.url) {
+                await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
+            }
 
             nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
-            // Stop if excessive (safety) but user has 25k so let's allow up to 100 pages
-            if (pageIdx >= 200) {
+            // Stop if excessive (safety) but user has 25k so let's allow up to 500 small pages
+            if (pageIdx >= 500) {
                 await addSyncLog(sid, "⚠️ 已達單次採集上限 (10萬筆)，終止當前任務。", "warning", indicatorName);
                 break;
             }
