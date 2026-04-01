@@ -3,6 +3,48 @@
 import { createClient } from "@/utils/supabase/server";
 import { getBackendAccessToken } from "@/utils/backend-auth";
 
+/** 
+ * Synchronize Logging Utilities 
+ */
+export async function addSyncLog(sessionId: string, message: string, status: 'info' | 'success' | 'warning' | 'error' = 'info', indicatorName?: string) {
+    try {
+        const supabase = await createClient();
+        await supabase.from("sync_logs").insert({
+            session_id: sessionId,
+            message,
+            status,
+            indicator_name: indicatorName
+        });
+    } catch (e) {
+        console.error("Failed to add sync log:", e);
+    }
+}
+
+export async function clearOldSyncLogs() {
+    try {
+        const supabase = await createClient();
+        const { error } = await supabase.from("sync_logs").delete().lt("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString());
+        if (error) throw error;
+    } catch (e) {
+        console.error("Failed to clear old sync logs:", e);
+    }
+}
+
+export async function getSyncLogs(sessionId: string) {
+    try {
+        const supabase = await createClient();
+        const { data, error } = await supabase
+            .from("sync_logs")
+            .select("*")
+            .eq("session_id", sessionId)
+            .order("created_at", { ascending: false });
+        if (error) throw error;
+        return { success: true, data };
+    } catch (e: any) {
+        return { success: false, message: e.message };
+    }
+}
+
 // Fallback to local 172.16.7.78
 const FHIR_SERVER_URL = process.env.NEXT_PUBLIC_FHIR_BASE_URL || "http://172.16.7.78:8082/fhir";
 
@@ -169,32 +211,42 @@ export async function getFhirRecordCount(indicatorName: string) {
 }
 
 // Phase 3: Sync a single indicator batch
-export async function syncFhirIndicatorBatch(indicatorName: string) {
+export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string) {
+    const sid = sessionId || "manual-sync";
     try {
         const supabase = await createClient();
         const START_DATE = getStartDate();
+
+        await addSyncLog(sid, `開始處理指標「${indicatorName}」`, "info", indicatorName);
 
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
         const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
 
         const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
-        if (!kpi) throw new Error("Indicator not found");
+        if (!kpi) throw new Error("指標定義不存在");
 
+        await addSyncLog(sid, `正在讀取指標與動態欄位定義...`, "info", indicatorName);
         const [ { data: kpiDlls }, { data: ftInf } ] = await Promise.all([
             supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).order('seq', { ascending: true }),
             supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpi.kpiid).order('seq', { ascending: true })
         ]);
         
-        // 僅清除該指標舊資料 (不全域重置)
+        await addSyncLog(sid, `清除舊有計算數據...`, "info", indicatorName);
         await supabase.from("kpi_detail").delete().eq("kpi_id", kpi.kpiid);
-        await supabase.from("KPI").delete().eq("indicator_name", indicatorName); // Keep KPI (summary) as is if it uses indicator_name as PK
+        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
 
         let accessToken = null;
-        try { accessToken = await getBackendAccessToken(activeFhirUrl); } catch (e) {}
+        try { 
+            accessToken = await getBackendAccessToken(activeFhirUrl); 
+            if (accessToken) await addSyncLog(sid, "已取得後端存取權限令牌 (JWT)", "info", indicatorName);
+        } catch (e) {}
 
         const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
         const nums = kpiDlls?.filter(d => d.kpi_dl_type === 2) || [];
-        if (denoms.length === 0) return { success: true, message: "無任何分母定義，跳過。" };
+        if (denoms.length === 0) {
+            await addSyncLog(sid, "無任何分母定義，跳過。", "warning", indicatorName);
+            return { success: true, message: "無任何分母定義，跳過。" };
+        }
 
         let baseResource = denoms[0].kpi_id_fhir_resource;
         if (!baseResource) {
@@ -208,9 +260,13 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             url += `&date=ge${START_DATE}`;
         }
 
-        // 提升抓取上限至 10,000 筆，並利用並行優化處理關聯資料
+        await addSyncLog(sid, `向 FHIR API 請求基礎資料 (${baseResource})...`, "info", indicatorName);
         let resources = await fetchFhirAll(url, 10000, accessToken); 
-        if (!resources || resources.length === 0) return { success: true, message: "無符合資料。" };
+        if (!resources || resources.length === 0) {
+            await addSyncLog(sid, "無符合指標時間範圍的 FHIR 資料。", "warning", indicatorName);
+            return { success: true, message: "無符合資料。" };
+        }
+        await addSyncLog(sid, `取得 ${resources.length} 筆原始資料，開始處理關聯資訊...`, "info", indicatorName);
 
         const patIds = resources.map((r: any) => r.subject?.reference?.split('/').pop()).filter((id: string) => !!id);
         const encIds = resources.map((r: any) => r.encounter?.reference?.split('/').pop()).filter((id: string) => !!id);
@@ -219,6 +275,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
             return null;
         }).filter((id: string) => !!id);
 
+        await addSyncLog(sid, `正在抓取關聯資源 (Patient: ${patIds.length}, Encounter: ${encIds.length}, Practitioner: ${pracIds.length})...`, "info", indicatorName);
         const [patData, encData, pracData] = await Promise.all([
             fetchByIds(activeFhirUrl, "Patient", patIds, accessToken),
             fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken),
@@ -228,6 +285,8 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
         const patMap = new Map(patData.map((p: any) => [p.id, p]));
         const encMap = new Map(encData.map((e: any) => [e.id, e]));
         const pracMap = new Map(pracData.map((p: any) => [p.id, p]));
+
+        await addSyncLog(sid, `關聯資料抓取完畢，開始套用指標公式計算...`, "info", indicatorName);
 
         let denominatorSet = resources.filter((res: any) => {
             for (const step of denoms) {
@@ -337,7 +396,6 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
                 numerator_value: isNumerator ? 1 : 0,
                 denominator_value: 1,
                 kpi_value: isNumerator ? 1 : 0,
-                _ftData: ftData // Temporary storage for second pass
             };
             allDetails.push(detail);
 
@@ -357,41 +415,57 @@ export async function syncFhirIndicatorBatch(indicatorName: string) {
         }
 
         if (allDetails.length > 0) {
+            await addSyncLog(sid, `計算完成，正在寫入 ${allDetails.length} 筆明細資料 (批次處理)...`, "info", indicatorName);
+            
             const kpiSummaryList = Array.from(allSummaryMap.values()).map(item => ({
                 ...item,
                 value: item.denominator > 0 ? parseFloat(((item.numerator / item.denominator) * 100).toFixed(2)) : 0
             }));
             await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
             
-            // 批次寫入 kpi_detail & kpi_ft_detail 以並行方式確保 ID 正確連結
-            const CHUNK_SIZE = 50;
+            // 批次寫入 kpi_detail & kpi_ft_detail (優化版本)
+            const CHUNK_SIZE = 1000;
             for (let i = 0; i < allDetails.length; i += CHUNK_SIZE) {
                 const batchDetails = allDetails.slice(i, i + CHUNK_SIZE);
                 const batchFt = allFtDetails.slice(i, i + CHUNK_SIZE);
 
-                await Promise.all(batchDetails.map(async (detail: any, idx: number) => {
-                    const { _ftData, ...cleanDetail } = detail;
-                    const ftData = batchFt[idx];
+                // 批次寫入 kpi_detail 並取得生成的 IDs
+                const { data: insertedRows, error: insErr } = await supabase
+                    .from("kpi_detail")
+                    .insert(batchDetails)
+                    .select("id");
 
-                    const { data: inserted, error: insErr } = await supabase
-                        .from("kpi_detail")
-                        .insert(cleanDetail)
-                        .select("id")
-                        .single();
+                if (insErr) {
+                    await addSyncLog(sid, `寫入明細失敗: ${insErr.message}`, "error", indicatorName);
+                    throw insErr;
+                }
 
-                    if (!insErr && inserted && ftData && Object.keys(ftData).length > 0) {
-                        const ftRow: any = { kpi_detail_id: inserted.id };
-                        Object.keys(ftData).forEach(k => {
-                            if (k.startsWith('column')) ftRow[k] = ftData[k];
-                        });
-                        await supabase.from("kpi_ft_detail").insert(ftRow);
+                // 準備動態欄位明細
+                if (insertedRows && insertedRows.length > 0) {
+                    const ftRows: any[] = [];
+                    insertedRows.forEach((row: any, idx: number) => {
+                        const ftData = batchFt[idx];
+                        if (ftData && Object.keys(ftData).length > 0) {
+                            const ftRow: any = { kpi_detail_id: row.id };
+                            Object.entries(ftData).forEach(([k, v]) => {
+                                if (k.startsWith('column')) ftRow[k] = v;
+                            });
+                            ftRows.push(ftRow);
+                        }
+                    });
+
+                    if (ftRows.length > 0) {
+                        const { error: ftErr } = await supabase.from("kpi_ft_detail").insert(ftRows);
+                        if (ftErr) await addSyncLog(sid, `寫入動態欄位失敗: ${ftErr.message}`, "warning", indicatorName);
                     }
-                }));
+                }
             }
         }
 
+        await addSyncLog(sid, `指標「${indicatorName}」同步完成，共 ${allDetails.length} 筆。`, "success", indicatorName);
         return { success: true, message: `已完成: ${allDetails.length} 筆資料` };
     } catch (e: any) {
+        await addSyncLog(sid, `指標「${indicatorName}」發生錯誤: ${e.message}`, "error", indicatorName);
         return { success: false, message: e.message };
     }
 }

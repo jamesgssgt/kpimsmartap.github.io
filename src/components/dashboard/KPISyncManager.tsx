@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -12,8 +12,9 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Loader2, RefreshCw } from "lucide-react";
-import { getSyncIndicators, getFhirRecordCount, syncFhirIndicatorBatch } from "@/app/actions/sync-data";
+import { getSyncIndicators, getFhirRecordCount, syncFhirIndicatorBatch, getSyncLogs } from "@/app/actions/sync-data";
 import { useRouter } from "next/navigation";
+import { v4 as uuidv4 } from "uuid";
 
 export function KPISyncManager() {
     const [open, setOpen] = useState(false);
@@ -22,13 +23,50 @@ export function KPISyncManager() {
     const [progress, setProgress] = useState({ current: 0, total: 0 });
     const [status, setStatus] = useState("");
     const [logs, setLogs] = useState<string[]>([]);
+    const [sessionId, setSessionId] = useState<string>("");
     const router = useRouter();
 
     const addLog = (msg: string) => {
-        setLogs(prev => [`[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}] ${msg}`, ...prev]);
+        setLogs(prev => {
+            const timeStr = `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}]`;
+            const fullMsg = msg.startsWith('[') ? msg : `${timeStr} ${msg}`;
+            // Avoid duplicate logs if they come from the same second/content
+            if (prev[0] === fullMsg) return prev;
+            return [fullMsg, ...prev];
+        });
     };
 
+    // Polling logic for remote logs
+    useEffect(() => {
+        let interval: NodeJS.Timeout;
+        if (syncing && sessionId) {
+            interval = setInterval(async () => {
+                const res = await getSyncLogs(sessionId);
+                if (res.success && res.data) {
+                    const remoteLogs = res.data.map((l: any) => {
+                        const timeStr = `[${new Date(l.created_at).toLocaleTimeString('zh-TW', { hour12: false })}]`;
+                        return `${timeStr} ${l.message}`;
+                    });
+                    
+                    setLogs(prev => {
+                        const newLogs = [...prev];
+                        remoteLogs.forEach((rl: string) => {
+                            if (!newLogs.includes(rl)) {
+                                newLogs.push(rl);
+                            }
+                        });
+                        // Sort by timestamp descending
+                        return newLogs.sort((a, b) => b.localeCompare(a));
+                    });
+                }
+            }, 2000);
+        }
+        return () => clearInterval(interval);
+    }, [syncing, sessionId]);
+
     const handleSync = async () => {
+        const sid = uuidv4();
+        setSessionId(sid);
         setSyncing(true);
         setSyncStep('preparing');
         setLogs([]);
@@ -68,7 +106,7 @@ export function KPISyncManager() {
                 setProgress({ current: i + 1, total: indicators.length });
                 addLog(`⏳ 正在執行「${name}」同步計算...`);
 
-                const res = await syncFhirIndicatorBatch(name);
+                const res = await syncFhirIndicatorBatch(name, sid);
                 if (res.success) {
                     addLog(`✨ 指標「${name}」同步完成: ${res.message}`);
                 } else {
