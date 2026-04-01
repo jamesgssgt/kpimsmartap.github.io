@@ -75,7 +75,11 @@ async function fetchFhir(url: string, accessToken: string, sid?: string, indicat
         throw new Error(`HTTP ${res.status}: ${errText}`);
     }
     const data = await res.json();
-    if (sid) await addSyncLog(sid, `[FHIR] SUCCESS (${data.entry?.length || 0} 筆)`, "info", indicatorName);
+    const count = data.entry?.length || 0;
+    if (sid) {
+        const logMsg = indicatorName ? `2. 取得 API：[${resourceType}] ...取得數量：${count} 筆` : `2. 取得 API：[${resourceType}] ...取得數量：${count} 筆`;
+        await addSyncLog(sid, logMsg, "info", indicatorName);
+    }
     return data;
 }
 
@@ -101,20 +105,29 @@ async function fetchByIds(baseUrl: string, type: string, ids: string[], accessTo
     const results: any[] = [];
 
     // FHIR supports long URLs but within limits; batch by 20 to avoid "Request-URI Too Long"
+    const batches = [];
     for (let i = 0; i < uniqueIds.length; i += 20) {
-        const batch = uniqueIds.slice(i, i + 20);
+        batches.push(uniqueIds.slice(i, i + 20));
+    }
+
+    const logPrefix = indicatorName ? `[${indicatorName}] ` : "";
+    
+    // Parallelize with basic Promise.all (for 500 records it's only 25 requests, which is safe)
+    const fetchPromises = batches.map(async (batch, idx) => {
         const url = `${baseUrl}/${type}?_id=${batch.join(',')}`;
-        const logPrefix = indicatorName ? `[${indicatorName}] ` : "";
-        if (sid) await addSyncLog(sid, `${logPrefix}正在抓取轄下 ${type} 關聯資料 (批次 ${i/20 + 1})...`, "info", indicatorName);
         try {
             const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
-            results.push(...(bundle.entry?.map((e: any) => e.resource) || []));
+            return bundle.entry?.map((e: any) => e.resource) || [];
         } catch (e: any) {
-            console.error(`Failed to fetch ${type} batch:`, e);
-            if (sid) await addSyncLog(sid, `[FHIR] ERROR 抓取 ${type} 批次失敗: ${e.message}`, "error", indicatorName);
-            // Continue with other batches instead of failing the whole indicator
+            console.error(`Failed to fetch ${type} batch ${idx+1}:`, e);
+            if (sid) await addSyncLog(sid, `${logPrefix}[${type}] 批次 ${idx + 1} 抓取失敗: ${e.message}`, "warning", indicatorName);
+            return [];
         }
-    }
+    });
+
+    const resultsArray = await Promise.all(fetchPromises);
+    resultsArray.forEach(batchResults => results.push(...batchResults));
+    
     return results;
 }
 
@@ -248,11 +261,20 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
 
         let accessToken = "";
+        let serverHost = "Unknown";
+        try { 
+            serverHost = new URL(activeFhirUrl.startsWith('http') ? activeFhirUrl : `http://${activeFhirUrl}`).hostname;
+        } catch(e) {}
+
         try { 
             accessToken = await getBackendAccessToken(activeFhirUrl) || ""; 
-            if (accessToken) await addSyncLog(sid, "已取得後端存取權限令牌 (JWT)", "info", indicatorName);
+            if (accessToken) {
+                await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權成功 (JWT)`, "success", indicatorName);
+            } else {
+                await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 無需授權或未設定`, "info", indicatorName);
+            }
         } catch (e: any) {
-            await addSyncLog(sid, `無法取得 JWT 授權: ${e.message || "未知原因"}。將嘗試無授權訪問...`, "warning", indicatorName);
+            await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權失敗 (${e.message})，嘗試無授權訪問...`, "warning", indicatorName);
         }
 
         const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
@@ -546,9 +568,9 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                     await addSyncLog(sid, `寫入動態欄位失敗: ${ftErr.message}`, "warning", indicatorName);
                 }
             }
+            await addSyncLog(sid, `3. 完成寫入數量：${allDetails.length} 筆`, "success", indicatorName);
         }
 
-        await addSyncLog(sid, `指標「${indicatorName}」同步完成，共 ${allDetails.length} 筆。`, "success", indicatorName);
         return { success: true, message: `已完成: ${allDetails.length} 筆資料` };
     } catch (e: any) {
         await addSyncLog(sid, `指標「${indicatorName}」發生錯誤: ${e.message}`, "error", indicatorName);
