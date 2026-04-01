@@ -234,8 +234,15 @@ export async function getFhirRecordCount(indicatorName: string) {
     }
 }
 
+interface SyncResult {
+    success: boolean;
+    count?: number;
+    message?: string;
+    error?: string;
+}
+
 // Phase 3: Sync a single indicator batch (Integrity V5: Incremental Updates)
-export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string) {
+export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string): Promise<SyncResult> {
     const sid = sessionId || crypto.randomUUID();
     console.log(`[Sync] Starting Integrity V5 batch for ${indicatorName} (ID: ${sid})`);
     const TIMEOUT_MS = 55000; // 55 seconds to stay under 60s platform limits
@@ -398,7 +405,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
 
     const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("SYNC_TIMEOUT")), TIMEOUT_MS));
     try {
-        return await Promise.race([syncLogic(), timeoutPromise]);
+        return await Promise.race([syncLogic(), timeoutPromise]) as SyncResult;
     } catch (e: any) {
         const msg = e.message === "SYNC_TIMEOUT" ? "同步超時，部分數據已保存並反映在報表，請再次執行以續傳。" : e.message;
         await addSyncLog(sid, `❌ 同步中斷：${msg}`, "error", indicatorName);
