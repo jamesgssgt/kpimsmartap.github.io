@@ -326,8 +326,8 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             for (const res of chunk) {
                 const pId = res.subject?.reference?.split('/').pop();
                 const eId = baseResource === 'Encounter' ? res.id : res.encounter?.reference?.split('/').pop();
-                const patient = patMap.get(pId);
-                const encounter = encMap.get(eId);
+                const patient = patMap.get(pId) as any;
+                const encounter = encMap.get(eId) as any;
                 if (!patient) continue;
 
                 let isNumerator = false;
@@ -345,7 +345,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                 }
 
                 const dId = res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
-                const dName = pracMap.get(dId)?.name?.[0]?.text || dId;
+                const dName = (pracMap.get(dId) as any)?.name?.[0]?.text || dId;
                 const dept = encounter?.serviceProvider?.display || "一般外科";
                 const dDate = res.performedPeriod?.end || res.period?.end || new Date().toISOString();
 
