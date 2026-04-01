@@ -12,7 +12,7 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Loader2, RefreshCw } from "lucide-react";
-import { getSyncIndicators, getFhirRecordCount, syncFhirIndicatorBatch, getSyncLogs, syncFhirData } from "@/app/actions/sync-data";
+import { getSyncIndicators, getIndicatorInitialUrl, syncSinglePage, getSyncLogs, syncFhirData, releaseSyncLock } from "@/app/actions/sync-data";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 
@@ -26,11 +26,15 @@ export function KPISyncManager() {
     const [sessionId, setSessionId] = useState<string>("");
     const router = useRouter();
 
-    const addLog = (msg: string) => {
+    const addLog = (msg: string, status: 'info' | 'success' | 'warning' | 'error' = 'info') => {
         setLogs(prev => {
             const timeStr = `[${new Date().toLocaleTimeString('zh-TW', { hour12: false })}]`;
-            const fullMsg = msg.startsWith('[') ? msg : `${timeStr} ${msg}`;
-            // Avoid duplicate logs if they come from the same second/content
+            let prefix = "";
+            if (status === 'warning') prefix = "⚠️ ";
+            if (status === 'error') prefix = "❌ ";
+            if (status === 'success') prefix = "✅ ";
+            
+            const fullMsg = `${timeStr} ${prefix}${msg}`;
             if (prev[0] === fullMsg) return prev;
             return [fullMsg, ...prev];
         });
@@ -79,23 +83,76 @@ export function KPISyncManager() {
         setSyncStep('syncing');
         setLogs([]);
         setProgress({ current: 0, total: 0 });
-        setStatus("正在啟動伺服器主控同步 (V10)...");
-        addLog("🚀 請稍候，後台正在執行全自動同步與鎖定...");
+        setStatus("🚀 啟動 V13 分頁重試同步引擎...");
+        addLog("🔗 正在建立安全同步階段並取得指標清單...");
 
         try {
-            const res = await syncFhirData(sid);
-            if (res.success) {
-                setSyncStep('completed');
-                setStatus("🎉 同步作業全數完成！");
-                addLog("🎊 所有指標已順利同步完成。");
-            } else {
-                throw new Error(res.message);
+            // 1. Initial Handshake & Get Indicators
+            const initRes = await syncFhirData(sid);
+            if (!initRes.success) throw new Error(initRes.message);
+            const indicators = initRes.indicators || [];
+            setProgress({ current: 0, total: indicators.length });
+
+            // 2. Loop Indicators
+            for (let i = 0; i < indicators.length; i++) {
+                const name = indicators[i];
+                setStatus(`正在準備同步指標：${name}`);
+                addLog(` indicador [${i + 1}/${indicators.length}]: ${name}`);
+
+                // 3. Get Initial URL for this indicator
+                const urlRes = await getIndicatorInitialUrl(name);
+                if (!urlRes.success) {
+                    addLog(`⚠️ 指標初始化失敗: ${urlRes.message}`, 'warning' as any);
+                    continue;
+                }
+
+                let currentUrl: string | null = urlRes.url ?? null;
+                let pageIdx = 1;
+                let processedInIndicator = 0;
+
+                // 4. Paging Loop for current indicator
+                while (currentUrl) {
+                    let retryCount = 0;
+                    const MAX_RETRIES = 3;
+                    let success = false;
+
+                    while (retryCount < MAX_RETRIES && !success) {
+                        try {
+                            if (!currentUrl) break;
+                            const pageRes = await syncSinglePage(name, currentUrl, sid, processedInIndicator, pageIdx);
+                            currentUrl = pageRes.nextUrl;
+                            processedInIndicator = pageRes.totalProcessedSoFar;
+                            pageIdx++;
+                            success = true;
+                            retryCount = 0; // 重置重試計次
+                        } catch (e: any) {
+                            retryCount++;
+                            if (retryCount >= MAX_RETRIES) {
+                                addLog(`🚨 分頁連續失敗 3 次，跳過此指標: ${name}`, 'error' as any);
+                                currentUrl = null; // 跳出當前指標循環
+                            } else {
+                                addLog(`⚠️ 網絡異常，正在進行第 ${retryCount} 次重載嘗試...`, 'warning' as any);
+                                await new Promise(r => setTimeout(r, 2000)); // 等待 2 秒後重試
+                            }
+                        }
+                    }
+                }
+                
+                setProgress(prev => ({ ...prev, current: i + 1 }));
+                addLog(`✅ 指標「${name}」同步完成！總計：${processedInIndicator} 筆`);
             }
+
+            setSyncStep('completed');
+            setStatus("🎉 全數同步作業已順利完成！");
+            addLog("🎊 所有指標已通過分頁重試機制同步結束。");
+
         } catch (e: any) {
             setSyncStep('error');
             setStatus("❌ 同步發生錯誤");
-            addLog(`🚨 錯誤: ${e.message}`);
+            addLog(`🚨 終止錯誤: ${e.message}`);
         } finally {
+            // Always release lock
+            await releaseSyncLock();
             setSyncing(false);
             router.refresh();
         }
@@ -148,7 +205,7 @@ export function KPISyncManager() {
                     </div>
 
                     {/* Logs Area */}
-                    <div className="bg-slate-950 rounded-lg p-4 h-64 overflow-y-auto text-[0.8rem] font-mono border border-slate-800 shadow-inner">
+                    <div className="bg-slate-950 rounded-lg p-4 h-64 overflow-y-auto text-[0.8rem] font-mono border border-slate-800 shadow-inner flex flex-col-reverse">
                         {logs.length === 0 ? (
                             <div className="text-slate-500 italic">準備就緒，等待開始...</div>
                         ) : (
@@ -156,6 +213,7 @@ export function KPISyncManager() {
                                 {logs.map((log, idx) => (
                                     <div key={idx} className={
                                         log.includes('❌') || log.includes('🚨') ? 'text-rose-400 font-bold' : 
+                                        log.includes('⚠️') || log.includes('warning') ? 'text-amber-400' :
                                         log.includes('✨') || log.includes('✅') || log.includes('🎊') ? 'text-emerald-400' : 
                                         'text-slate-300'
                                     }>

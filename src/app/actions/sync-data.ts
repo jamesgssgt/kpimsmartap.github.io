@@ -254,6 +254,17 @@ function evaluateCondition(resource: any, condition: any): boolean {
     return check(actualValue);
 }
 
+/**
+ * Sync Session Context
+ */
+interface SyncPageResult {
+    success: boolean;
+    nextUrl: string | null;
+    processedCount: number;
+    totalProcessedSoFar: number;
+    message?: string;
+}
+
 export async function getSyncIndicators() {
     try {
         const supabase = await createClient();
@@ -265,22 +276,20 @@ export async function getSyncIndicators() {
     }
 }
 
-export async function getFhirRecordCount(indicatorName: string) {
+export async function getIndicatorInitialUrl(indicatorName: string) {
     try {
         const supabase = await createClient();
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
         const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
         const { data: kpi } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
-        if (!kpi) throw new Error(`Indicator ${indicatorName} not found`);
+        if (!kpi) throw new Error(`指標「${indicatorName}」定義不存在`);
+
         const { data: dls } = await supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).eq("kpi_dl_type", 1).order('seq');
-        if (!dls || dls.length === 0) return { success: true, count: 0 };
-        let baseResource = dls[0].kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
+        let baseResource = dls?.[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
+        
         const START_DATE = getStartDate();
-        const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_summary=count`;
-        let accessToken = "";
-        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e) {}
-        const res = await fetchFhir(url, accessToken);
-        return { success: true, count: res?.total || 0, resourceType: baseResource };
+        const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=100`;
+        return { success: true, url, kpiid: kpi.kpiid, formula: kpi.formula };
     } catch (e: any) {
         return { success: false, message: e.message };
     }
@@ -335,205 +344,197 @@ export async function clearAllSyncData() {
     }
 }
 
-export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string, stepInfo?: string): Promise<SyncResult> {
-    const sid = sessionId || crypto.randomUUID();
-    const TIMEOUT_MS = 600000; // 10 minutes for large streaming
-    
-    const syncLogic = async () => {
+/**
+ * V13: Sync Single Page Action
+ * This processes exactly one page (100 records) and returns.
+ */
+export async function syncSinglePage(
+    indicatorName: string, 
+    url: string, 
+    sessionId: string, 
+    totalProcessedSoFar: number,
+    pageIdx: number
+): Promise<SyncPageResult> {
+    try {
         const supabase = await createClient();
-        const START_DATE = getStartDate();
-        const stepPrefix = stepInfo ? `[STEP] ${stepInfo} ` : "";
-        await addSyncLog(sid, `${stepPrefix}🚀 流式同步啟動：「${indicatorName}」 (V12 增量存檔版)`, "info", indicatorName);
+        const sid = sessionId;
         
+        // Configuration
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
         const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
         const { data: kpiDef } = await supabase.from("kpi_definitions").select("*").eq("name", indicatorName).single();
         if (!kpiDef) throw new Error("指標定義不存在");
 
-        const [{ data: kpiDlls }, { data: ftInf }] = await Promise.all([
+        const [kpiDllsRes, ftInfRes] = await Promise.all([
             supabase.from("kpi_dl").select("*").eq("kpiid", kpiDef.kpiid).order('seq'),
             supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpiDef.kpiid).order('seq')
         ]);
+        const kpiDlls = kpiDllsRes.data;
+        const ftInf = ftInfRes.data;
         
         let accessToken = "";
         try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e: any) {}
 
-        const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
-        let baseResource = denoms[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
+        const resTypeMatch = url.match(/\/([A-Za-z]+)\?/);
+        const baseResource = resTypeMatch ? resTypeMatch[1] : (indicatorName.includes("手術") ? "Procedure" : "Encounter");
+
+        // 1. Fetch FHIR Page
+        const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
+        const chunk = bundle.entry?.map((e: any) => e.resource) || [];
+        if (chunk.length === 0) {
+            return { success: true, nextUrl: null, processedCount: 0, totalProcessedSoFar };
+        }
+
+        // 2. Fetch Supporting Resources (Patients, etc.)
+        const patIds = chunk.map((r: any) => r.subject?.reference?.split('/').pop()).filter(Boolean);
+        const encIds = chunk.map((r: any) => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
+        const pracIds = chunk.map((r: any) => r.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop()).filter(Boolean);
         
-        // STREAMING START: V12.1 - Shrink batch to 100 for extreme stability
-        let nextUrl: string | null = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=100`;
-        let totalProcessed = 0;
-        let pageIdx = 0;
+        const [pats, encs, pracs] = await Promise.all([
+            fetchByIds(activeFhirUrl, "Patient", patIds, accessToken, sid, indicatorName),
+            fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken, sid, indicatorName),
+            fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken, sid, indicatorName)
+        ]);
 
-        while (nextUrl) {
-            pageIdx++;
-            const bundle = await fetchFhir(nextUrl, accessToken, sid, indicatorName);
-            const chunk = bundle.entry?.map((e: any) => e.resource) || [];
-            if (chunk.length === 0) break;
+        const patMap = new Map(pats.map((p: any) => [p.id, p]));
+        const pracMap = new Map(pracs.map((p: any) => [p.id, p]));
+        const encMap = new Map(encs.map((e: any) => [e.id, e]));
 
-            // PAGE PROCESSING
-            const patIds = chunk.map((r: any) => r.subject?.reference?.split('/').pop()).filter(Boolean);
-            const encIds = chunk.map((r: any) => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
-            const pracIds = chunk.map((r: any) => r.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop()).filter(Boolean);
-            
-            const [pats, encs, pracs] = await Promise.all([
-                fetchByIds(activeFhirUrl, "Patient", patIds, accessToken, sid, indicatorName),
-                fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken, sid, indicatorName),
-                fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken, sid, indicatorName)
-            ]);
+        // 3. Map to DB rows
+        const batchDetails: any[] = [];
+        const batchFtDetails: any[] = [];
 
-            const patMap = new Map(pats.map((p: any) => [p.id, p]));
-            const pracMap = new Map(pracs.map((p: any) => [p.id, p]));
-            const encMap = new Map(encs.map((e: any) => [e.id, e]));
+        for (const res of chunk) {
+            const pId = res.subject?.reference?.split('/').pop();
+            const eId = baseResource === 'Encounter' ? res.id : res.encounter?.reference?.split('/').pop();
+            const patient = patMap.get(pId) as any;
+            const encounter = encMap.get(eId) as any;
+            if (!patient) continue;
 
-            const batchDetails: any[] = [];
-            const batchFtDetails: any[] = [];
-
-            for (const res of chunk) {
-                const pId = res.subject?.reference?.split('/').pop();
-                const eId = baseResource === 'Encounter' ? res.id : res.encounter?.reference?.split('/').pop();
-                const patient = patMap.get(pId) as any;
-                const encounter = encMap.get(eId) as any;
-                if (!patient) continue;
-
-                const nums = kpiDlls?.filter(d => d.kpi_dl_type === 2) || [];
-                let isNumerator = false;
-                if (indicatorName.includes("死亡率")) {
-                    const disp = encounter?.hospitalization?.dischargeDisposition?.coding?.[0]?.code;
-                    if (['aadvice', 'exp'].includes(disp)) isNumerator = true;
-                    else if (res.performedPeriod?.end && patient.deceasedDateTime) {
-                        const diff = (new Date(patient.deceasedDateTime).getTime() - new Date(res.performedPeriod.end).getTime()) / 3600000;
-                        if (diff > 0 && diff <= 48) isNumerator = true;
-                    }
-                } else if (indicatorName.includes("抗生素")) {
-                    isNumerator = res.note?.some((n: any) => n.text?.includes("given: true")) || false;
-                } else {
-                    isNumerator = nums.some(s => evaluateCondition(res, JSON.parse(s.kpi_dl_condition_value || '{}')));
+            const nums = kpiDlls?.filter(d => d.kpi_dl_type === 2) || [];
+            let isNumerator = false;
+            // Indicators Logic
+            if (indicatorName.includes("死亡率")) {
+                const disp = encounter?.hospitalization?.dischargeDisposition?.coding?.[0]?.code;
+                if (['aadvice', 'exp'].includes(disp)) isNumerator = true;
+                else if (res.performedPeriod?.end && patient.deceasedDateTime) {
+                    const diff = (new Date(patient.deceasedDateTime).getTime() - new Date(res.performedPeriod.end).getTime()) / 3600000;
+                    if (diff > 0 && diff <= 48) isNumerator = true;
                 }
-
-                const dId = res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
-                const practitioner = pracMap.get(dId) as any;
-                const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
-                const dept = encounter?.serviceProvider?.display || "一般外科";
-                const dDate = extractResourceDate(res);
-
-                const detailId = crypto.randomUUID();
-                batchDetails.push({
-                    fhir_id: res.id, // V12: Logic link via FHIR ID
-                    kpi_id: kpiDef.kpiid, 
-                    indicator_name: indicatorName, // Crucial for aggregation
-                    data_date: dDate,
-                    department: dept, 
-                    doctor_id: dId, 
-                    doctor_name: dName,
-                    hospital_id: "台北綜合醫院", 
-                    patient_id: pId, 
-                    patient_gender: patient.gender,
-                    patient_birth_date: patient.birthDate, 
-                    numerator_value: isNumerator ? 1 : 0,
-                    denominator_value: 1, 
-                    kpi_value: isNumerator ? 1 : 0
-                });
-
-                if (ftInf && ftInf.length > 0) {
-                    const ftRow: any = { fhir_id: res.id }; // Linkable
-                    for (const f of ftInf) {
-                        let val = getValueByPath(res, f.fhir_source) || getValueByPath(patient, f.fhir_source) || getValueByPath(encounter, f.fhir_source);
-                        if (f.column_slot) ftRow[f.column_slot] = String(val || "-");
-                    }
-                    batchFtDetails.push(ftRow);
-                }
+            } else if (indicatorName.includes("抗生素")) {
+                isNumerator = res.note?.some((n: any) => n.text?.includes("given: true")) || false;
+            } else {
+                isNumerator = nums.some(s => evaluateCondition(res, JSON.parse(s.kpi_dl_condition_value || '{}')));
             }
 
-            // REAL-TIME SAVE
-            if (batchDetails.length > 0) {
-                // Upsert Details (prevent dups via fhir_id)
-                await supabase.from("kpi_detail").upsert(batchDetails, { onConflict: "fhir_id" });
-                
-                // Update FT details (join via detail_id found from fhir_id)
-                if (batchFtDetails.length > 0) {
-                    const { data: savedDetails } = await supabase.from("kpi_detail").select("id, fhir_id").in("fhir_id", batchFtDetails.map(f => f.fhir_id));
-                    const fhirToUuid = new Map(savedDetails?.map(d => [d.fhir_id, d.id]) || []);
-                    const ftToSave = batchFtDetails.map(f => ({
-                        ...f,
-                        kpi_detail_id: fhirToUuid.get(f.fhir_id),
-                        fhir_id: undefined // remove temp field
-                    })).filter(f => f.kpi_detail_id);
-                    await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
+            const dId = res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
+            const practitioner = pracMap.get(dId) as any;
+            const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
+            const dept = encounter?.serviceProvider?.display || "一般外科";
+            const dDate = extractResourceDate(res);
+
+            batchDetails.push({
+                fhir_id: res.id,
+                kpi_id: kpiDef.kpiid, 
+                indicator_name: indicatorName,
+                data_date: dDate,
+                department: dept, 
+                doctor_id: dId, 
+                doctor_name: dName,
+                hospital_id: "台北綜合醫院", 
+                patient_id: pId, 
+                patient_gender: patient.gender,
+                patient_birth_date: patient.birthDate, 
+                numerator_value: isNumerator ? 1 : 0,
+                denominator_value: 1, 
+                kpi_value: isNumerator ? 1 : 0
+            });
+
+            if (ftInf && ftInf.length > 0) {
+                const ftRow: any = { fhir_id: res.id };
+                for (const f of ftInf) {
+                    let val = getValueByPath(res, f.fhir_source) || getValueByPath(patient, f.fhir_source) || getValueByPath(encounter, f.fhir_source);
+                    if (f.column_slot) ftRow[f.column_slot] = String(val || "-");
                 }
-            }
-
-            totalProcessed += chunk.length;
-            await addSyncLog(sid, `✅ 進度：${totalProcessed} 筆已完成 (Page ${pageIdx})...`, "info", indicatorName);
-            
-            // Recalculate summary every 5 pages or at the end to balance performance
-            if (pageIdx % 5 === 0 || !bundle.link?.find((l: any) => l.relation === 'next')?.url) {
-                await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
-            }
-
-            nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
-            // Stop if excessive (safety) but user has 25k so let's allow up to 500 small pages
-            if (pageIdx >= 500) {
-                await addSyncLog(sid, "⚠️ 已達單次採集上限 (10萬筆)，終止當前任務。", "warning", indicatorName);
-                break;
+                batchFtDetails.push(ftRow);
             }
         }
 
-        await addSyncLog(sid, `🎉 指標「${indicatorName}」串流同步結束！總計處理：${totalProcessed} 筆`, "success", indicatorName);
-        return { success: true, count: totalProcessed };
-    };
+        // 4. Upsert DB
+        if (batchDetails.length > 0) {
+            await supabase.from("kpi_detail").upsert(batchDetails, { onConflict: "fhir_id" });
+            if (batchFtDetails.length > 0) {
+                const { data: savedDetails } = await supabase.from("kpi_detail").select("id, fhir_id").in("fhir_id", batchFtDetails.map(f => f.fhir_id));
+                const fhirToUuid = new Map(savedDetails?.map(d => [d.fhir_id, d.id]) || []);
+                const ftToSave = batchFtDetails.map(f => ({
+                    ...f,
+                    kpi_detail_id: fhirToUuid.get(f.fhir_id),
+                    fhir_id: undefined
+                })).filter(f => f.kpi_detail_id);
+                await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
+            }
+        }
 
-    const timeoutPromise = new Promise((_, reject) => setTimeout(() => reject(new Error("SYNC_TIMEOUT")), TIMEOUT_MS));
-    try {
-        return await Promise.race([syncLogic(), timeoutPromise]) as SyncResult;
+        const nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
+        
+        // Recalculate summary every 5 pages or at end
+        if (pageIdx % 5 === 0 || !nextUrl) {
+            await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
+        }
+
+        const newTotal = totalProcessedSoFar + chunk.length;
+        await addSyncLog(sid, `✅ 進度：${newTotal} 筆已完成 (第 ${pageIdx} 頁)...`, "info", indicatorName);
+
+        return {
+            success: true,
+            nextUrl,
+            processedCount: chunk.length,
+            totalProcessedSoFar: newTotal
+        };
     } catch (e: any) {
-        await addSyncLog(sid, `⚠️ 中斷：${e.message}`, "warning", indicatorName);
-        return { success: false, message: e.message };
+        await addSyncLog(sessionId, `🚨 分頁同步錯誤: ${e.message}`, "error", indicatorName);
+        throw e;
     }
+}
+
+export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: string, stepInfo?: string): Promise<SyncResult> {
+    // Deprecated for direct use, kept for reference logic
+    return { success: false, message: "Use syncSinglePage architecture instead." };
 }
 
 export async function syncFhirData(sessionId?: string) {
     const supabase = await createClient();
     const sid = sessionId || crypto.randomUUID();
     
+    // Check stale lock (same as before)
     const { data: lock } = await supabase.from("system").select("SysValue, Modifieddate").eq("SysCode", "SYNC_LOCK").single();
     if (lock?.SysValue === "TRUE") {
         const lastMod = lock.Modifieddate ? new Date(lock.Modifieddate).getTime() : 0;
         const now = new Date().getTime();
         const diffMinutes = (now - lastMod) / 60000;
-        
-        // If the lock is newer than 10 minutes, prevent concurrent sync
         if (diffMinutes < 10) {
             await addSyncLog(sid, "❌ 同步衝突：偵測到另一個同步進程正在運行(10分內)。", "error");
             return { success: false, message: "⚠️ 同步作業正在進行中，或前次任務尚未逾時，請稍候。" };
         }
-        // Else, it's stale, allow it
-        await addSyncLog(sid, "⚠️ 偵測到過時同步鎖 (已逾10分)，自動解除鎖定並開始新任務。", "warning");
     }
     
     await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "TRUE", Modifieddate: new Date().toISOString() });
-    await addSyncLog(sid, "🚀 啟動全指標自動同步 (V10 伺服器主控版)...", "info");
     
     try {
+        // Just return indicators to frontend for client-side loop
         const { data: indicators } = await getSyncIndicators();
-        if (!indicators || indicators.length === 0) throw new Error("查無指標定義");
-        
-        let totalSuccess = 0;
-        for (let i = 0; i < indicators.length; i++) {
-            const name = indicators[i];
-            const stepInfo = `${i + 1}/${indicators.length}`;
-            const res = await syncFhirIndicatorBatch(name, sid, stepInfo);
-            if (res.success) totalSuccess++;
-            else break; 
-        }
-        
-        await addSyncLog(sid, `🎊 同步作業全數結束！成功 ${totalSuccess}/${indicators.length} 項指標。`, "success");
-        return { success: true, message: `成功完成 ${totalSuccess} 項指標。` };
+        return { success: true, indicators };
     } catch (e: any) {
-        await addSyncLog(sid, `🚨 主程序崩潰: ${e.message}`, "error");
         return { success: false, message: e.message };
-    } finally {
-        await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "FALSE" });
+    }
+}
+
+export async function releaseSyncLock() {
+    try {
+        const supabase = await createClient();
+        await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "FALSE", Modifieddate: new Date().toISOString() });
+        return { success: true };
+    } catch (e) {
+        return { success: false };
     }
 }
