@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, useRef } from "react";
 import { Button } from "@/components/ui/button";
 import {
     Dialog,
@@ -76,6 +76,8 @@ export function KPISyncManager() {
         return () => clearInterval(interval);
     }, [syncing, sessionId]);
 
+    const abortRef = useRef(false);
+
     const handleSync = async () => {
         const sid = uuidv4();
         setSessionId(sid);
@@ -83,8 +85,9 @@ export function KPISyncManager() {
         setSyncStep('syncing');
         setLogs([]);
         setProgress({ current: 0, total: 0 });
-        setStatus("🚀 啟動 V13 分頁重試同步引擎...");
+        setStatus("🚀 啟動 V13.4 分頁重試同步引擎...");
         addLog("🔗 正在建立安全同步階段並取得指標清單...");
+        abortRef.current = false;
 
         try {
             // 1. Initial Handshake & Get Indicators
@@ -95,6 +98,12 @@ export function KPISyncManager() {
 
             // 2. Loop Indicators
             for (let i = 0; i < indicators.length; i++) {
+                // Check Abort
+                if (abortRef.current) {
+                    addLog("🛑 接獲手動中斷指令，正在安全退出...", "warning");
+                    break;
+                }
+
                 const name = indicators[i];
                 setStatus(`正在準備同步指標：${name}`);
                 addLog(`指標 [${i + 1}/${indicators.length}]: ${name}`);
@@ -119,12 +128,16 @@ export function KPISyncManager() {
 
                 // 4. Paging Loop for current indicator
                 while (currentUrl) {
+                    // Check Abort
+                    if (abortRef.current) break;
+
                     let retryCount = 0;
                     const MAX_RETRIES = 3;
                     let success = false;
 
                     while (retryCount < MAX_RETRIES && !success) {
                         try {
+                            if (abortRef.current) break;
                             if (!currentUrl) break;
                             const pageRes = await syncSinglePage(name, currentUrl, sid, processedInIndicator, pageIdx);
                             currentUrl = pageRes.nextUrl;
@@ -145,13 +158,20 @@ export function KPISyncManager() {
                     }
                 }
                 
-                setProgress(prev => ({ ...prev, current: i + 1 }));
-                addLog(`✅ 指標「${name}」同步完成！總計：${processedInIndicator} 筆`);
+                if (!abortRef.current) {
+                    setProgress(prev => ({ ...prev, current: i + 1 }));
+                    addLog(`✅ 指標「${name}」同步完成！總計：${processedInIndicator} 筆`);
+                }
             }
 
-            setSyncStep('completed');
-            setStatus("🎉 全數同步作業已順利完成！");
-            addLog("🎊 所有指標已通過分頁重試機制同步結束。");
+            if (abortRef.current) {
+                setStatus("⏹️ 同步已手動中斷");
+                setSyncStep('idle');
+            } else {
+                setSyncStep('completed');
+                setStatus("🎉 全數同步作業已順利完成！");
+                addLog("🎊 所有指標已通過分頁重試機制同步結束。");
+            }
 
         } catch (e: any) {
             setSyncStep('error');
@@ -245,6 +265,19 @@ export function KPISyncManager() {
                     ) : (
                         <div className="text-xs text-muted-foreground flex items-center justify-center w-full italic">
                             正在運行中，請勿關閉視窗...
+                        </div>
+                    )}
+                    {/* Abort Button Inside Dialog */}
+                    {syncing && (
+                        <div className="flex justify-end">
+                            <Button 
+                                onClick={() => abortRef.current = true}
+                                variant="destructive"
+                                size="sm"
+                                className="font-bold shadow-inner"
+                            >
+                                🚫 中斷同步程序
+                            </Button>
                         </div>
                     )}
                 </DialogFooter>
