@@ -2,6 +2,7 @@
 
 import { createClient } from "@/utils/supabase/server";
 import { getBackendAccessToken } from "@/utils/backend-auth";
+import { SMART_CONFIG } from "@/utils/smart-conf";
 
 /** 
  * Synchronize Logging Utilities 
@@ -271,10 +272,21 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             if (accessToken) {
                 await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權成功 (JWT)`, "success", indicatorName);
             } else {
-                await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 無需授權或未設定`, "info", indicatorName);
+                const errMsg = "未取得授權令牌 (JWT)，同步中止。";
+                await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權失敗：${errMsg}`, "error", indicatorName);
+                return { success: false, message: errMsg };
             }
         } catch (e: any) {
-            await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權失敗 (${e.message})，嘗試無授權訪問...`, "warning", indicatorName);
+            const errMsg = `授權發生異常：${e.message}`;
+            await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權失敗：${errMsg}`, "error", indicatorName);
+            return { success: false, message: errMsg };
+        }
+    
+        // Ensure we actually have a token if an auth type is specified
+        if (!accessToken && SMART_CONFIG.privateKey) {
+            const errMsg = "設定了金鑰但未獲得有效令牌，同步中止。";
+            await addSyncLog(sid, `1. FHIR Server 授權：${serverHost} 授權失敗：${errMsg}`, "error", indicatorName);
+            return { success: false, message: errMsg };
         }
 
         const denoms = kpiDlls?.filter(d => d.kpi_dl_type === 1) || [];
