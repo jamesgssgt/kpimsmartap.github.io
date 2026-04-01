@@ -369,7 +369,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             if (res.performer?.[0]?.actor?.reference) {
                 const refId = res.performer[0].actor.reference.split(/[:\/]/).pop();
                 doctorId = refId || doctorId;
-                const prac = pracMap.get(refId);
+                const prac: any = pracMap.get(refId);
                 doctorName = prac?.name?.[0]?.text || refId || doctorName;
             }
 
