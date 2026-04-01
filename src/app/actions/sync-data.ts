@@ -492,11 +492,13 @@ export async function syncSinglePage(
                 if (fetchErr) throw fetchErr;
 
                 const fhirToUuid = new Map(savedDetails?.map(d => [d.fhir_id, d.id]) || []);
-                const ftToSave = batchFtDetails.map(f => ({
-                    ...f,
-                    kpi_detail_id: fhirToUuid.get(f.fhir_id),
-                    fhir_id: undefined
-                })).filter(f => f.kpi_detail_id);
+                const ftToSave = batchFtDetails.map(f => {
+                    const { fhir_id, ...rest } = f; // 徹底剝離，不讓其進入 JSON
+                    return {
+                        ...rest,
+                        kpi_detail_id: fhirToUuid.get(fhir_id)
+                    };
+                }).filter(f => f.kpi_detail_id);
                 
                 if (ftToSave.length > 0) {
                     const { error: ftErr } = await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
