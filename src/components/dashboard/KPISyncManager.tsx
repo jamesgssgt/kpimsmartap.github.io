@@ -85,7 +85,7 @@ export function KPISyncManager() {
         setSyncStep('syncing');
         setLogs([]);
         setProgress({ current: 0, total: 0 });
-        setStatus("🚀 啟動 V13.4 分頁重試同步引擎...");
+        setStatus("🚀 啟動 V13.6 分頁重試同步引擎...");
         addLog("🔗 正在建立安全同步階段並取得指標清單...");
         abortRef.current = false;
 
