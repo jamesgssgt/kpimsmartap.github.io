@@ -456,7 +456,6 @@ export async function syncSinglePage(
             batchDetails.push({
                 fhir_id: res.id,
                 kpi_id: kpiDef.kpiid, 
-                indicator_name: indicatorName,
                 data_date: dDate,
                 department: dept, 
                 doctor_id: dId, 
@@ -482,16 +481,29 @@ export async function syncSinglePage(
 
         // 4. Upsert DB
         if (batchDetails.length > 0) {
-            await supabase.from("kpi_detail").upsert(batchDetails, { onConflict: "fhir_id" });
+            const { error: detailErr } = await supabase.from("kpi_detail").upsert(batchDetails, { onConflict: "fhir_id" });
+            if (detailErr) {
+                await addSyncLog(sid, `❌ kpi_detail 寫入失敗: ${detailErr.message} (${detailErr.details || 'no details'})`, "error", indicatorName);
+                throw new Error(`DB_WRITE_ERROR: ${detailErr.message}`);
+            }
+
             if (batchFtDetails.length > 0) {
-                const { data: savedDetails } = await supabase.from("kpi_detail").select("id, fhir_id").in("fhir_id", batchFtDetails.map(f => f.fhir_id));
+                const { data: savedDetails, error: fetchErr } = await supabase.from("kpi_detail").select("id, fhir_id").in("fhir_id", batchFtDetails.map(f => f.fhir_id));
+                if (fetchErr) throw fetchErr;
+
                 const fhirToUuid = new Map(savedDetails?.map(d => [d.fhir_id, d.id]) || []);
                 const ftToSave = batchFtDetails.map(f => ({
                     ...f,
                     kpi_detail_id: fhirToUuid.get(f.fhir_id),
                     fhir_id: undefined
                 })).filter(f => f.kpi_detail_id);
-                await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
+                
+                if (ftToSave.length > 0) {
+                    const { error: ftErr } = await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
+                    if (ftErr) {
+                        await addSyncLog(sid, `❌ kpi_ft_detail 寫入失敗: ${ftErr.message}`, "error", indicatorName);
+                    }
+                }
             }
         }
 
