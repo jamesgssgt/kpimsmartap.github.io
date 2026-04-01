@@ -196,7 +196,8 @@ export default async function DashboardPage(props: {
                 value: val,
                 unit: agg.unit || "%",
                 status,
-                patient_id: "", patient_gender: "", patient_birthday: "", report_date: "",
+                patient_id: "", patient_gender: "", patient_birthday: "", 
+                report_date: agg.report_date || "", // USE ACTUAL CLINICAL DATE
                 admission_date: "", discharge_date: "", op_start: "", op_end: "", abnormal_reason: ""
             };
         }).sort((a, b) => b.value - a.value);

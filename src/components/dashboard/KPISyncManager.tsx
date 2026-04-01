@@ -12,7 +12,7 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Loader2, RefreshCw } from "lucide-react";
-import { getSyncIndicators, getFhirRecordCount, syncFhirIndicatorBatch, getSyncLogs } from "@/app/actions/sync-data";
+import { getSyncIndicators, getFhirRecordCount, syncFhirIndicatorBatch, getSyncLogs, syncFhirData } from "@/app/actions/sync-data";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 
@@ -45,6 +45,15 @@ export function KPISyncManager() {
                 if (res.success && res.data) {
                     const remoteLogs = res.data.map((l: any) => {
                         const timeStr = `[${new Date(l.created_at).toLocaleTimeString('zh-TW', { hour12: false })}]`;
+                        
+                        // Parse progress from logs (V10 Logic)
+                        if (l.message.includes('[STEP]')) {
+                            const match = l.message.match(/\[STEP\] (\d+)\/(\d+)/);
+                            if (match) {
+                                setProgress({ current: parseInt(match[1]), total: parseInt(match[2]) });
+                            }
+                        }
+                        
                         return `${timeStr} ${l.message}`;
                     });
                     
@@ -55,11 +64,10 @@ export function KPISyncManager() {
                                 newLogs.push(rl);
                             }
                         });
-                        // Sort by timestamp descending
                         return newLogs.sort((a, b) => b.localeCompare(a));
                     });
                 }
-            }, 2000);
+            }, 1500); 
         }
         return () => clearInterval(interval);
     }, [syncing, sessionId]);
@@ -68,61 +76,28 @@ export function KPISyncManager() {
         const sid = uuidv4();
         setSessionId(sid);
         setSyncing(true);
-        setSyncStep('preparing');
+        setSyncStep('syncing');
         setLogs([]);
-        setStatus("正在取得指標清單...");
-        addLog("🚀 開始同步流程...");
+        setProgress({ current: 0, total: 0 });
+        setStatus("正在啟動伺服器主控同步 (V10)...");
+        addLog("🚀 請稍候，後台正在執行全自動同步與鎖定...");
 
         try {
-            // Phase 1: Get Indicators
-            const metaRes = await getSyncIndicators();
-            if (!metaRes.success || !metaRes.data) {
-                throw new Error(metaRes.message || "取得指標清單失敗");
+            const res = await syncFhirData(sid);
+            if (res.success) {
+                setSyncStep('completed');
+                setStatus("🎉 同步作業全數完成！");
+                addLog("🎊 所有指標已順利同步完成。");
+            } else {
+                throw new Error(res.message);
             }
-            const indicators = metaRes.data;
-            addLog(`✅ 已取得 ${indicators.length} 個指標定義。`);
-
-            // Phase 2: Check Counts
-            setSyncStep('checking');
-            setProgress({ current: 0, total: indicators.length });
-            
-            for (let i = 0; i < indicators.length; i++) {
-                const name = indicators[i];
-                setStatus(`正在確認筆數: ${name} (${i + 1}/${indicators.length})`);
-                setProgress({ current: i + 1, total: indicators.length });
-                
-                const countRes = await getFhirRecordCount(name);
-                if (countRes.success) {
-                    addLog(`🔍 指標「${name}」預計同步 ${countRes.count || 0} 筆數據 (${countRes.resourceType})`);
-                }
-            }
-
-            // Phase 3: Sync Batches
-            setSyncStep('syncing');
-            setProgress({ current: 0, total: indicators.length });
-            for (let i = 0; i < indicators.length; i++) {
-                const name = indicators[i];
-                setStatus(`正在同步: ${name} (${i + 1}/${indicators.length})`);
-                setProgress({ current: i + 1, total: indicators.length });
-                addLog(`⏳ 正在執行「${name}」同步計算...`);
-
-                const res = await syncFhirIndicatorBatch(name, sid);
-                if (res.success) {
-                    addLog(`✨ 指標「${name}」同步完成: ${res.message}`);
-                } else {
-                    addLog(`❌ 指標「${name}」同步失敗: ${res.message}`);
-                }
-            }
-
-            setSyncStep('completed');
-            setStatus("🎉 同步作業全數完成！");
-            addLog("🎊 同步流程順利結束。");
         } catch (e: any) {
             setSyncStep('error');
             setStatus("❌ 同步發生錯誤");
             addLog(`🚨 錯誤: ${e.message}`);
         } finally {
             setSyncing(false);
+            router.refresh();
         }
     };
 
