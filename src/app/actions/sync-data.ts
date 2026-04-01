@@ -497,13 +497,22 @@ export async function syncFhirData(sessionId?: string) {
     const supabase = await createClient();
     const sid = sessionId || crypto.randomUUID();
     
-    const { data: lock } = await supabase.from("system").select("SysValue").eq("SysCode", "SYNC_LOCK").single();
+    const { data: lock } = await supabase.from("system").select("SysValue, Modifieddate").eq("SysCode", "SYNC_LOCK").single();
     if (lock?.SysValue === "TRUE") {
-        await addSyncLog(sid, "❌ 同步衝突：偵測到另一個同步進程正在運行。", "error");
-        return { success: false, message: "⚠️ 同步作業已在進行中，請稍候。" };
+        const lastMod = lock.Modifieddate ? new Date(lock.Modifieddate).getTime() : 0;
+        const now = new Date().getTime();
+        const diffMinutes = (now - lastMod) / 60000;
+        
+        // If the lock is newer than 10 minutes, prevent concurrent sync
+        if (diffMinutes < 10) {
+            await addSyncLog(sid, "❌ 同步衝突：偵測到另一個同步進程正在運行(10分內)。", "error");
+            return { success: false, message: "⚠️ 同步作業正在進行中，或前次任務尚未逾時，請稍候。" };
+        }
+        // Else, it's stale, allow it
+        await addSyncLog(sid, "⚠️ 偵測到過時同步鎖 (已逾10分)，自動解除鎖定並開始新任務。", "warning");
     }
     
-    await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "TRUE" });
+    await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "TRUE", Modifieddate: new Date().toISOString() });
     await addSyncLog(sid, "🚀 啟動全指標自動同步 (V10 伺服器主控版)...", "info");
     
     try {
