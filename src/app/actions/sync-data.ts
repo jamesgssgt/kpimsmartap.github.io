@@ -96,12 +96,18 @@ async function fetchByIds(baseUrl: string, type: string, ids: string[], accessTo
     const uniqueIds = Array.from(new Set(ids));
     const results: any[] = [];
 
-    // FHIR supports long URLs but within limits; batch by 50
-    for (let i = 0; i < uniqueIds.length; i += 50) {
-        const batch = uniqueIds.slice(i, i + 50);
+    // FHIR supports long URLs but within limits; batch by 20 to avoid "Request-URI Too Long"
+    for (let i = 0; i < uniqueIds.length; i += 20) {
+        const batch = uniqueIds.slice(i, i + 20);
         const url = `${baseUrl}/${type}?_id=${batch.join(',')}`;
-        const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
-        results.push(...(bundle.entry?.map((e: any) => e.resource) || []));
+        try {
+            const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
+            results.push(...(bundle.entry?.map((e: any) => e.resource) || []));
+        } catch (e: any) {
+            console.error(`Failed to fetch ${type} batch:`, e);
+            if (sid) await addSyncLog(sid, `[FHIR] ERROR 抓取 ${type} 批次失敗: ${e.message}`, "error", indicatorName);
+            // Continue with other batches instead of failing the whole indicator
+        }
     }
     return results;
 }
@@ -464,7 +470,9 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
                 }
             }
 
+            const detailId = crypto.randomUUID();
             const detail = {
+                id: detailId,
                 kpi_id: kpi.kpiid,
                 data_date: reportDate.split('T')[0],
                 department: deptName,
@@ -480,6 +488,15 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             };
             allDetails.push(detail);
 
+            // Prepare FT detail row for this specific detail
+            if (Object.keys(ftData).length > 0) {
+                const ftRow: any = { kpi_detail_id: detailId };
+                Object.entries(ftData).forEach(([k, v]) => {
+                    if (k.startsWith('column')) ftRow[k] = v;
+                });
+                allFtDetails.push(ftRow);
+            }
+
             const key = `${deptName}|${doctorName}|${indicatorName}`;
             if (!allSummaryMap.has(key)) {
                 allSummaryMap.set(key, {
@@ -491,8 +508,6 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             const sum = allSummaryMap.get(key);
             sum.numerator += (isNumerator ? 1 : 0);
             sum.denominator += 1;
-
-            allFtDetails.push(ftData); // Store linked ft data
         }
 
         if (allDetails.length > 0) {
@@ -504,41 +519,25 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             }));
             await supabase.from("KPI").upsert(kpiSummaryList, { onConflict: "department, doctor, indicator_name" });
             
-            // 批次寫入 kpi_detail & kpi_ft_detail (優化版本)
-            const CHUNK_SIZE = 1000;
+            // 批次寫入 kpi_detail & kpi_ft_detail (優化版本: 預生成實體 ID)
+            const CHUNK_SIZE = 500;
             for (let i = 0; i < allDetails.length; i += CHUNK_SIZE) {
                 const batchDetails = allDetails.slice(i, i + CHUNK_SIZE);
-                const batchFt = allFtDetails.slice(i, i + CHUNK_SIZE);
-
-                // 批次寫入 kpi_detail 並取得生成的 IDs
-                const { data: insertedRows, error: insErr } = await supabase
-                    .from("kpi_detail")
-                    .insert(batchDetails)
-                    .select("id");
-
+                
+                // 批次寫入 kpi_detail
+                const { error: insErr } = await supabase.from("kpi_detail").insert(batchDetails);
                 if (insErr) {
                     await addSyncLog(sid, `寫入明細失敗: ${insErr.message}`, "error", indicatorName);
                     throw insErr;
                 }
+            }
 
-                // 準備動態欄位明細
-                if (insertedRows && insertedRows.length > 0) {
-                    const ftRows: any[] = [];
-                    insertedRows.forEach((row: any, idx: number) => {
-                        const ftData = batchFt[idx];
-                        if (ftData && Object.keys(ftData).length > 0) {
-                            const ftRow: any = { kpi_detail_id: row.id };
-                            Object.entries(ftData).forEach(([k, v]) => {
-                                if (k.startsWith('column')) ftRow[k] = v;
-                            });
-                            ftRows.push(ftRow);
-                        }
-                    });
-
-                    if (ftRows.length > 0) {
-                        const { error: ftErr } = await supabase.from("kpi_ft_detail").insert(ftRows);
-                        if (ftErr) await addSyncLog(sid, `寫入動態欄位失敗: ${ftErr.message}`, "warning", indicatorName);
-                    }
+            // 批次寫入 kpi_ft_detail
+            for (let i = 0; i < allFtDetails.length; i += CHUNK_SIZE) {
+                const batchFt = allFtDetails.slice(i, i + CHUNK_SIZE);
+                const { error: ftErr } = await supabase.from("kpi_ft_detail").insert(batchFt);
+                if (ftErr) {
+                    await addSyncLog(sid, `寫入動態欄位失敗: ${ftErr.message}`, "warning", indicatorName);
                 }
             }
         }
