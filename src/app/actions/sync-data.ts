@@ -3,6 +3,51 @@
 import { createClient } from "@/utils/supabase/server";
 import { getBackendAccessToken } from "@/utils/backend-auth";
 import { SMART_CONFIG } from "@/utils/smart-conf";
+import * as crypto from 'crypto';
+
+/**
+ * Helper: Limit Concurrency for Promises
+ */
+async function promiseLimit<T>(tasks: (() => Promise<T>)[], limit: number): Promise<T[]> {
+    const results: T[] = [];
+    let i = 0;
+    const execute = async () => {
+        while (i < tasks.length) {
+            const index = i++;
+            const task = tasks[index];
+            if (task) {
+                results[index] = await task();
+            }
+        }
+    };
+    const workers = Array.from({ length: Math.min(limit, tasks.length) }, () => execute());
+    await Promise.all(workers);
+    return results;
+}
+
+/**
+ * Helper: Fetch with Automatic Retry & Backoff
+ */
+async function fetchWithRetry(url: string, options: RequestInit, maxRetries = 3, sid?: string, indicatorName?: string): Promise<Response> {
+    for (let i = 0; i < maxRetries; i++) {
+        try {
+            const res = await fetch(url, options);
+            // Retry on Rate Limit (429) or Server Errors (5xx)
+            if (res.status === 429 || (res.status >= 500 && res.status <= 599)) {
+                throw new Error(`HTTP ${res.status}`);
+            }
+            return res;
+        } catch (e: any) {
+            if (i === maxRetries - 1) throw e;
+            const wait = Math.pow(2, i) * 1000; // Exponential backoff: 1s, 2s, 4s
+            if (sid) {
+                await addSyncLog(sid, `⚠️ 網路連線異常 (${e.message})，正在進行第 ${i + 1}/${maxRetries} 次重試...`, "warning", indicatorName);
+            }
+            await new Promise(resolve => setTimeout(resolve, wait));
+        }
+    }
+    throw new Error("Maximum retries reached");
+}
 
 /** 
  * Synchronize Logging Utilities 
@@ -79,7 +124,7 @@ async function fetchFhir(url: string, accessToken: string, sid?: string, indicat
         headers['Authorization'] = `Bearer ${accessToken}`;
     }
     
-    const res = await fetch(url, { headers });
+    const res = await fetchWithRetry(url, { headers }, 3, sid, indicatorName);
 
     if (!res.ok) {
         const errText = await res.text();
@@ -253,7 +298,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
     console.log(`[Sync] Starting batch for ${indicatorName} (ID: ${sid})`);
 
     // Internal timeout to provide better feedback than a generic platform 504/Unexpected Response
-    const TIMEOUT_MS = 25000; // 25 seconds (slightly less than Vercel's default 30s)
+    const TIMEOUT_MS = 55000; // 55 seconds (optimized for larger datasets)
     
     const syncLogic = async () => {
         try {
@@ -357,14 +402,37 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
             fetchByIds(activeFhirUrl, "Practitioner", pracIds, accessToken, sid, indicatorName)
         ];
 
+        const subResourceChunks = (ids: string[], size: number) => {
+            const chunks = [];
+            for (let i = 0; i < ids.length; i += size) {
+                chunks.push(ids.slice(i, i + size));
+            }
+            return chunks;
+        };
+
         if (needsObservations && encIds.length > 0) {
-            fetchPromises.push(fetchFhirAll(`${activeFhirUrl}/Observation?encounter=${encIds.slice(0, 100).join(',')}`, 1000, accessToken, sid, indicatorName));
+            const chunks = subResourceChunks(encIds, 50);
+            await addSyncLog(sid, `正在異步抓取 ${encIds.length} 個就醫紀錄的關聯檢驗 (Observation, ${chunks.length} 批次)...`, "info", indicatorName);
+            
+            const tasks = chunks.map((chunk) => async () => {
+                return fetchFhirAll(`${activeFhirUrl}/Observation?encounter=${chunk.join(',')}`, 1000, accessToken, sid, indicatorName);
+            });
+            
+            fetchPromises.push(promiseLimit(tasks, 3).then(results => results.flat()));
         } else {
             fetchPromises.push(Promise.resolve([]));
         }
 
         if (needsMedications && encIds.length > 0) {
-            fetchPromises.push(fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?context=${encIds.slice(0, 100).join(',')}`, 1000, accessToken, sid, indicatorName));
+            const chunks = subResourceChunks(encIds, 50);
+            await addSyncLog(sid, `正在異步抓取 ${encIds.length} 個就醫紀錄的關聯用藥 (Medication, ${chunks.length} 批次)...`, "info", indicatorName);
+            
+            const tasks = chunks.map(chunk => async () => {
+                return fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?context=${chunk.join(',')}`, 1000, accessToken, sid, indicatorName);
+            });
+            
+            // Limit concurrency for Medications
+            fetchPromises.push(promiseLimit(tasks, 3).then(results => results.flat()));
         } else {
             fetchPromises.push(Promise.resolve([]));
         }
