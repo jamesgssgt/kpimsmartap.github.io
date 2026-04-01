@@ -144,51 +144,70 @@ function extractResourceDate(res: any): string {
     return "1970-01-01"; // Generic fallback to identify records with missing dates
 }
 
-async function fetchFhirAll(url: string, max: number = 100000, accessToken: string, sid?: string, indicatorName?: string) {
-    let allMap = new Map<string, any>();
-    let currentUrl = url;
-    let totalFetched = 0;
+async function fetchFhirAll(url: string, timeoutMs: number, accessToken: string, sessionId: string, indicatorName: string) {
+    const results: any[] = [];
+    let nextUrl = url;
+    let pageCount = 0;
+    const MAX_PAGES = 50; // Safety cap: 50 pages to prevent Action Timeout (approx 5000 records)
 
-    while (currentUrl && totalFetched < max) {
-        const bundle = await fetchFhir(currentUrl, accessToken, sid, indicatorName);
-        const entries = bundle.entry?.map((e: any) => e.resource) || [];
-        
-        for (const r of entries) {
-            if (r.id && !allMap.has(r.id)) {
-                allMap.set(r.id, r);
-                totalFetched++;
+    while (nextUrl && pageCount < MAX_PAGES) {
+        try {
+            const res = await fetch(nextUrl, {
+                headers: accessToken ? { 'Authorization': `Bearer ${accessToken}`, 'Accept': 'application/fhir+json' } : { 'Accept': 'application/fhir+json' },
+                cache: 'no-store',
+                signal: AbortSignal.timeout(timeoutMs)
+            });
+
+            if (!res.ok) {
+                await addSyncLog(sessionId, `FHIR Server Error: ${res.status}`, "error", indicatorName);
+                break;
             }
-        }
 
-        const nextLink = bundle.link?.find((l: any) => l.relation === 'next')?.url;
-        currentUrl = nextLink;
-        if (!nextLink) break;
+            const bundle = await res.json();
+            if (bundle.entry) bundle.entry.forEach((e: any) => results.push(e.resource));
+
+            nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
+            pageCount++;
+            
+            if (pageCount % 10 === 0) {
+                console.log(`[Sync] ${indicatorName} fetched ${results.length} resources...`);
+            }
+        } catch (e: any) {
+            await addSyncLog(sessionId, `Fetch interrupted: ${e.message}`, "warning", indicatorName);
+            break;
+        }
     }
-    return Array.from(allMap.values());
+    return results;
 }
 
-async function fetchByIds(baseUrl: string, type: string, ids: string[], accessToken: string, sid?: string, indicatorName?: string) {
+async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], accessToken: string, sessionId: string, indicatorName: string) {
     if (ids.length === 0) return [];
-    const uniqueIds = Array.from(new Set(ids.filter(Boolean)));
-    const resultsMap = new Map<string, any>();
+    const uniqueIds = Array.from(new Set(ids));
+    const results: any[] = [];
+    const CHUNK_SIZE = 40; 
+    
     const batches = [];
-    for (let i = 0; i < uniqueIds.length; i += 20) batches.push(uniqueIds.slice(i, i + 20));
+    for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
+        batches.push(uniqueIds.slice(i, i + CHUNK_SIZE));
+    }
 
-    const fetchPromises = batches.map(async (batch) => {
-        const url = `${baseUrl}/${type}?_id=${batch.join(',')}&_count=1000`;
+    for (const chunk of batches) {
+        const url = `${baseUrl}/${resourceType}?_id=${chunk.join(',')}`;
         try {
-            const bundle = await fetchFhir(url, accessToken, sid, indicatorName);
-            const resources = bundle.entry?.map((e: any) => e.resource) || [];
-            resources.forEach((r: any) => {
-                if (r.id) resultsMap.set(r.id, r);
+            const res = await fetch(url, {
+                headers: accessToken ? { 'Authorization': `Bearer ${accessToken}`, 'Accept': 'application/fhir+json' } : { 'Accept': 'application/fhir+json' },
+                cache: 'no-store',
+                signal: AbortSignal.timeout(30000)
             });
+            if (res.ok) {
+                const bundle = await res.json();
+                if (bundle.entry) bundle.entry.forEach((e: any) => results.push(e.resource));
+            }
         } catch (e) {
-            // silent fail for specific batch
+            console.error(`Batch fetch failed for ${resourceType}:`, e);
         }
-    });
-
-    await Promise.all(fetchPromises);
-    return Array.from(resultsMap.values());
+    }
+    return results;
 }
 
 function getValueByPath(obj: any, path: string) {
