@@ -364,7 +364,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
         }
 
         if (needsMedications && encIds.length > 0) {
-            fetchPromises.push(fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?encounter=${encIds.slice(0, 100).join(',')}`, 1000, accessToken, sid, indicatorName));
+            fetchPromises.push(fetchFhirAll(`${activeFhirUrl}/MedicationAdministration?context=${encIds.slice(0, 100).join(',')}`, 1000, accessToken, sid, indicatorName));
         } else {
             fetchPromises.push(Promise.resolve([]));
         }
