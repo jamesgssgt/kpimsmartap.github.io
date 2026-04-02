@@ -164,15 +164,51 @@ export default async function DashboardPage(props: {
             }
         });
 
-        // 7. Calculate Latest Metrics (KPITable)
+        // Step 11: Dynamic Date Filter Defaults (Based on Indicator's own KPI Summary dates)
+        const todayStr = new Date().toISOString().split('T')[0];
+        const kpiDates = kpiSummaryData?.map(d => d.report_date).filter(Boolean) as string[] || [];
+        // Max date is the latest between database and today (clamped to today)
+        let maxDataDateStr = kpiDates.length > 0 ? kpiDates.sort().reverse()[0] : todayStr;
+        if (maxDataDateStr > todayStr) maxDataDateStr = todayStr;
+        
+        const globalMaxDateStr = maxDataDateStr;
+        const globalMinDateStr = `${maxDataDateStr.split('-')[0]}-01-01`; // Jan 1st of same year
+        const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
+
+        // 7. Calculate Latest Metrics (KPITable) - Now with GroupBy and Month Filtering
         const isDrillDown = deptFilters.length > 0;
-        let monitoredPoints = kpiSummaryData || [];
+        
+        // Filter by the TARGET MONTH (The last month of the filter range)
+        const monthFilteredData = kpiSummaryData?.filter(d => d.report_date === targetAbnormalMonth) || [];
+        
+        // Apply Dept/Doctor filter (if any)
+        let monitoredPoints = monthFilteredData;
         if (deptFilters.length > 0) monitoredPoints = monitoredPoints.filter(p => deptFilters.includes(p.department));
         if (doctorFilters.length > 0) monitoredPoints = monitoredPoints.filter(p => doctorFilters.includes(p.doctor));
 
-        const latestMetrics: KPIDetail[] = monitoredPoints.map(agg => {
-            const val = agg.value || 0;
-            const target = targetMap.get(agg.indicator_name);
+        // GROUP BY logic to prevent duplicate department entries
+        const groupedMap = new Map<string, any>();
+        monitoredPoints.forEach(agg => {
+            const key = isDrillDown ? (agg.doctor || "未知") : (agg.department || "其他");
+            const existing = groupedMap.get(key) || { 
+                n: 0, d: 0, unit: agg.unit || "%", 
+                indicator_name: agg.indicator_name, 
+                indicator_def: agg.indicator_def,
+                report_date: agg.report_date,
+                department: agg.department,
+                doctor: agg.doctor,
+                created_at: agg.created_at
+            };
+            groupedMap.set(key, {
+                ...existing,
+                n: existing.n + (agg.numerator || 0),
+                d: existing.d + (agg.denominator || 0)
+            });
+        });
+
+        const latestMetrics: KPIDetail[] = Array.from(groupedMap.entries()).map(([key, data]) => {
+            const val = data.d > 0 ? parseFloat(((data.n / data.d) * 100).toFixed(2)) : 0;
+            const target = targetMap.get(data.indicator_name);
             let status = "正常";
 
             if (target && target.val !== undefined && target.val !== null) {
@@ -185,25 +221,24 @@ export default async function DashboardPage(props: {
                     case "<": isNormal = val < tVal; break;
                     case ">": isNormal = val > tVal; break;
                     case "=": isNormal = val === tVal; break;
-                    default: isNormal = val >= tVal;
                 }
                 if (!isNormal) status = "異常";
             } else if (val > 0) status = "異常";
 
             return {
-                id: agg.id.toString(),
-                created_at: agg.created_at,
-                department: agg.department,
-                doctor: agg.doctor,
-                indicator_name: agg.indicator_name,
-                indicator_def: agg.indicator_def,
-                numerator: agg.numerator,
-                denominator: agg.denominator,
+                id: key,
+                created_at: data.created_at,
+                department: data.department,
+                doctor: data.doctor,
+                indicator_name: data.indicator_name,
+                indicator_def: data.indicator_def,
+                numerator: data.n,
+                denominator: data.d,
                 value: val,
-                unit: agg.unit || "%",
+                unit: data.unit,
                 status,
                 patient_id: "", patient_gender: "", patient_birthday: "",
-                report_date: agg.report_date || "", // USE ACTUAL CLINICAL DATE
+                report_date: data.report_date || "",
                 admission_date: "", discharge_date: "", op_start: "", op_end: "", abnormal_reason: ""
             };
         }).sort((a, b) => b.value - a.value);
@@ -266,16 +301,6 @@ export default async function DashboardPage(props: {
             return item;
         });
 
-        // Step 11: Dynamic Date Filter Defaults (Based on Indicator's own KPI Summary dates)
-        const todayStr = new Date().toISOString().split('T')[0];
-        const kpiDates = kpiSummaryData?.map(d => d.report_date).filter(Boolean) as string[] || [];
-        // Max date is the latest between database and today (clamped to today)
-        let maxDataDateStr = kpiDates.length > 0 ? kpiDates.sort().reverse()[0] : todayStr;
-        if (maxDataDateStr > todayStr) maxDataDateStr = todayStr;
-        
-        const globalMaxDateStr = maxDataDateStr;
-        const globalMinDateStr = `${maxDataDateStr.split('-')[0]}-01-01`; // Jan 1st of same year
-        const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
 
         return (
             <div className="flex-1 space-y-4 p-6 md:p-12">
@@ -307,7 +332,7 @@ export default async function DashboardPage(props: {
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標監控] ${primaryIndicatorName} - 本月累積報表`}
+                            title={`[指標監控] ${primaryIndicatorName} - ${targetAbnormalMonth} 累計報表`}
                             viewType={isDrillDown ? "doctor" : "department"}
                             numeratorLabel={numeratorLabel}
                             denominatorLabel={denominatorLabel}
