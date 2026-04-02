@@ -236,6 +236,7 @@ function getValueByPath(obj: any, path: string) {
 
 function evaluateCondition(resource: any, condition: any): boolean {
     const { path, operator, value } = condition;
+    if (!path) return true; // Empty path matches everything
     const actualValue = getValueByPath(resource, path);
     const check = (val: any) => {
         if (val === undefined || val === null) return false;
@@ -244,14 +245,63 @@ function evaluateCondition(resource: any, condition: any): boolean {
         switch (operator) {
             case 'equals': return strVal === strTarget || (strTarget.includes(',') && strTarget.split(',').map(s => s.trim()).includes(strVal));
             case 'contains': return strVal.includes(strTarget);
-            case 'greaterThan': return parseFloat(strVal) > parseFloat(strTarget);
-            case 'lessThan': return parseFloat(strVal) < parseFloat(strTarget);
+            case 'greaterThan': 
+            case 'greater_than': return parseFloat(strVal) > parseFloat(strTarget);
+            case 'lessThan': 
+            case 'less_than': return parseFloat(strVal) < parseFloat(strTarget);
             case 'exists': return true;
             default: return strVal == strTarget;
         }
     };
     if (Array.isArray(actualValue)) return actualValue.some(v => check(v));
     return check(actualValue);
+}
+
+/**
+ * Helper: Extract Practitioner ID based on Resource Type
+ */
+function getPractitionerId(res: any): string {
+    if (!res) return "unknown";
+    const rt = res.resourceType;
+    if (rt === 'Encounter') {
+        const ref = res.participant?.[0]?.individual?.reference || res.practitioner?.[0]?.reference;
+        return ref?.split(/[:\/]/).pop() || "unknown";
+    }
+    if (rt === 'Procedure') {
+        return res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
+    }
+    if (rt === 'Observation' || rt === 'MedicationAdministration') {
+        const ref = res.performer?.[0]?.reference || res.performer?.[0]?.actor?.reference;
+        return ref?.split(/[:\/]/).pop() || "unknown";
+    }
+    return "unknown";
+}
+
+/**
+ * Helper: Evaluate Factor (KIFT) Steps
+ */
+function evaluateKiftSteps(res: any, steps: any[]): boolean {
+    if (!steps || steps.length === 0) return false;
+    
+    // Default logic: All steps must be true (AND)
+    return steps.every(step => {
+        let actualValue: any;
+        
+        // Special case: period.duration (Calculated field)
+        if (step.path === 'period.duration' && res.period?.start && res.period?.end) {
+            const start = new Date(res.period.start).getTime();
+            const end = new Date(res.period.end).getTime();
+            actualValue = (end - start) / 3600000; // Result in hours
+        } else {
+            actualValue = getValueByPath(res, step.path);
+        }
+        
+        return evaluateCondition(res, { 
+            path: step.path, 
+            operator: step.operator, 
+            value: step.value 
+        });
+    });
 }
 
 /**
@@ -389,8 +439,21 @@ export async function syncSinglePage(
             supabase.from("kpi_dl").select("*").eq("kpiid", kpiDef.kpiid).order('seq'),
             supabase.from("kpi_ft_detail_inf").select("*").eq("kpi_id", kpiDef.kpiid).order('seq')
         ]);
-        const kpiDlls = kpiDllsRes.data;
+        const kpiDlls = kpiDllsRes.data || [];
         const ftInf = ftInfRes.data;
+
+        // Fetch Factor Rules (KIFT Steps) if linked
+        const kiftIds = kpiDlls.map(d => d.kift_id || d.kiftid).filter(Boolean);
+        let kiftMap = new Map<string, any[]>();
+        if (kiftIds.length > 0) {
+            const { data: steps } = await supabase.from("kift_steps").select("*").in("kift_id", kiftIds);
+            if (steps) {
+                steps.forEach(s => {
+                    const existing = kiftMap.get(s.kift_id) || [];
+                    kiftMap.set(s.kift_id, [...existing, s]);
+                });
+            }
+        }
         
         let accessToken = "";
         try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e: any) {}
@@ -408,7 +471,7 @@ export async function syncSinglePage(
         // 2. Fetch Supporting Resources (Patients, etc.)
         const patIds = chunk.map((r: any) => r.subject?.reference?.split('/').pop()).filter(Boolean);
         const encIds = chunk.map((r: any) => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
-        const pracIds = chunk.map((r: any) => r.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop()).filter(Boolean);
+        const pracIds = chunk.map((r: any) => getPractitionerId(r)).filter((id: string) => id !== "unknown");
         
         if (sid) await addSyncLog(sid, `⏳ 正在解析 ${chunk.length} 筆臨床資料並獲取關聯資源...`, "info", indicatorName);
         const [pats, encs, pracs] = await Promise.all([
@@ -445,10 +508,17 @@ export async function syncSinglePage(
             } else if (indicatorName.includes("抗生素")) {
                 isNumerator = res.note?.some((n: any) => n.text?.includes("given: true")) || false;
             } else {
-                isNumerator = nums.some(s => evaluateCondition(res, JSON.parse(s.kpi_dl_condition_value || '{}')));
+                // Rule evaluation: Check both kift (factors) and legacy conditions
+                isNumerator = nums.some(s => {
+                    const kid = s.kift_id || s.kiftid;
+                    if (kid && kiftMap.has(kid)) {
+                        return evaluateKiftSteps(res, kiftMap.get(kid)!);
+                    }
+                    return evaluateCondition(res, JSON.parse(s.kpi_dl_condition_value || '{}'));
+                });
             }
 
-            const dId = res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
+            const dId = getPractitionerId(res);
             const practitioner = pracMap.get(dId) as any;
             const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
             const dept = encounter?.serviceProvider?.display || "一般外科";
