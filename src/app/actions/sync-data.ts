@@ -267,20 +267,23 @@ function evaluateCondition(resource: any, condition: any, overrideValue?: any): 
 function getPractitionerId(res: any): string {
     if (!res) return "unknown";
     const rt = res.resourceType;
+    let ref = "";
     if (rt === 'Encounter') {
-        const ref = res.participant?.find((p: any) => p.individual?.reference)?.individual?.reference || 
-                    res.practitioner?.[0]?.reference || 
-                    res.serviceProvider?.reference;
-        return ref?.split(/[:\/]/).pop() || "unknown";
+        const pRef = res.participant?.find((p: any) => p.individual?.reference?.includes('Practitioner/'))?.individual?.reference;
+        const prRef = res.practitioner?.find((p: any) => p.reference?.includes('Practitioner/'))?.reference;
+        ref = pRef || prRef || "";
     }
     if (rt === 'Procedure') {
-        return res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
+        ref = res.performer?.find((p: any) => p.actor?.reference?.includes('Practitioner/'))?.actor?.reference || "";
     }
     if (rt === 'Observation' || rt === 'MedicationAdministration') {
-        const ref = res.performer?.[0]?.reference || res.performer?.[0]?.actor?.reference || res.performer?.[0]?.individual?.reference;
-        return ref?.split(/[:\/]/).pop() || "unknown";
+        ref = res.performer?.find((p: any) => 
+            p.reference?.includes('Practitioner/') || 
+            p.actor?.reference?.includes('Practitioner/') || 
+            p.individual?.reference?.includes('Practitioner/')
+        )?.reference || "";
     }
-    return "unknown";
+    return ref ? ref.split(/[:\/]/).pop()! : "unknown";
 }
 
 /**
@@ -520,7 +523,10 @@ export async function syncSinglePage(
 
             const dId = getPractitionerId(res);
             const practitioner = pracMap.get(dId) as any;
-            const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
+            const dName = practitioner 
+                ? (practitioner.name?.[0]?.text || practitioner.name?.[0]?.family || dId) 
+                : (dId === "unknown" ? "其他" : dId);
+
             const dept = encounter?.serviceProvider?.display || "一般外科";
             const dDate = extractResourceDate(res);
 
@@ -537,7 +543,8 @@ export async function syncSinglePage(
                 patient_birth_date: patient.birthDate, 
                 numerator_value: isNumerator ? 1 : 0,
                 denominator_value: 1, 
-                kpi_value: isNumerator ? 1 : 0
+                kpi_value: isNumerator ? 1 : 0,
+                Modifieddate: new Date().toISOString()
             });
 
             if (ftInf && ftInf.length > 0) {

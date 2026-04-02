@@ -260,8 +260,19 @@ export default async function DashboardPage(props: {
             return item;
         });
 
-        const globalMaxDateStr = trendData.length > 0 ? trendData[trendData.length - 1].date : new Date().toISOString().split('T')[0];
-        const globalMinDateStr = "2025-06-01";
+        // Logic: End Date = Latest clinical data date. Start Date = Jan 1st of that year, max back 6 months.
+        const maxDataDate = trendDataRaw && trendDataRaw.length > 0 
+            ? new Date(Math.max(...trendDataRaw.map(r => new Date(r.data_date as string).getTime())))
+            : new Date();
+        
+        const globalMaxDateStr = maxDataDate.toISOString().split('T')[0];
+        
+        let calculatedStartDate = new Date(maxDataDate.getFullYear(), 0, 1);
+        const sixMonthsAgo = new Date(maxDataDate);
+        sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
+        if (calculatedStartDate < sixMonthsAgo) calculatedStartDate = sixMonthsAgo;
+        
+        const globalMinDateStr = calculatedStartDate.toISOString().split('T')[0];
         const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
 
         return (
