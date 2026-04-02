@@ -146,9 +146,6 @@ export function KPITable({ items, title, viewType = "department", numeratorLabel
                                 <TableCell>
                                     <div className="flex flex-col">
                                         <span>{item.value}{item.unit}</span>
-                                        {item.report_date && (
-                                            <span className="text-[10px] text-muted-foreground italic">數據日: {item.report_date}</span>
-                                        )}
                                     </div>
                                 </TableCell>
                                 <TableCell>{item.numerator}</TableCell>
