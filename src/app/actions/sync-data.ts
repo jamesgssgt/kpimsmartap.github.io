@@ -234,12 +234,16 @@ function getValueByPath(obj: any, path: string) {
     return current;
 }
 
-function evaluateCondition(resource: any, condition: any): boolean {
+function evaluateCondition(resource: any, condition: any, overrideValue?: any): boolean {
     const { path, operator, value } = condition;
-    if (!path) return true; // Empty path matches everything
-    const actualValue = getValueByPath(resource, path);
+    
+    // Use manual value if provided (e.g., calculated fields like period.duration)
+    // Otherwise fetch by path
+    const actualValue = overrideValue !== undefined ? overrideValue : (path ? getValueByPath(resource, path) : undefined);
+    
+    if (actualValue === undefined || actualValue === null) return false;
+
     const check = (val: any) => {
-        if (val === undefined || val === null) return false;
         const strVal = String(val);
         const strTarget = String(value);
         switch (operator) {
@@ -264,14 +268,16 @@ function getPractitionerId(res: any): string {
     if (!res) return "unknown";
     const rt = res.resourceType;
     if (rt === 'Encounter') {
-        const ref = res.participant?.[0]?.individual?.reference || res.practitioner?.[0]?.reference;
+        const ref = res.participant?.find((p: any) => p.individual?.reference)?.individual?.reference || 
+                    res.practitioner?.[0]?.reference || 
+                    res.serviceProvider?.reference;
         return ref?.split(/[:\/]/).pop() || "unknown";
     }
     if (rt === 'Procedure') {
         return res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
     }
     if (rt === 'Observation' || rt === 'MedicationAdministration') {
-        const ref = res.performer?.[0]?.reference || res.performer?.[0]?.actor?.reference;
+        const ref = res.performer?.[0]?.reference || res.performer?.[0]?.actor?.reference || res.performer?.[0]?.individual?.reference;
         return ref?.split(/[:\/]/).pop() || "unknown";
     }
     return "unknown";
@@ -285,22 +291,16 @@ function evaluateKiftSteps(res: any, steps: any[]): boolean {
     
     // Default logic: All steps must be true (AND)
     return steps.every(step => {
-        let actualValue: any;
+        let actualValue: any = undefined;
         
-        // Special case: period.duration (Calculated field)
+        // Special case: period.duration (Calculated field in hours)
         if (step.path === 'period.duration' && res.period?.start && res.period?.end) {
             const start = new Date(res.period.start).getTime();
             const end = new Date(res.period.end).getTime();
-            actualValue = (end - start) / 3600000; // Result in hours
-        } else {
-            actualValue = getValueByPath(res, step.path);
+            actualValue = (end - start) / 3600000;
         }
         
-        return evaluateCondition(res, { 
-            path: step.path, 
-            operator: step.operator, 
-            value: step.value 
-        });
+        return evaluateCondition(res, step, actualValue);
     });
 }
 
