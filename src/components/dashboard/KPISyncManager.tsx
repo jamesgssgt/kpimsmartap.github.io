@@ -12,7 +12,7 @@ import {
     DialogTrigger,
 } from "@/components/ui/dialog";
 import { Loader2, RefreshCw } from "lucide-react";
-import { getSyncIndicators, getIndicatorInitialUrl, getFhirRecordCount, syncSinglePage, getSyncLogs, syncFhirData, releaseSyncLock } from "@/app/actions/sync-data";
+import { getSyncIndicators, getIndicatorInitialUrl, getFhirRecordCount, syncSinglePage, getSyncLogs, syncFhirData, releaseSyncLock, clearIndicatorData } from "@/app/actions/sync-data";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
@@ -25,7 +25,7 @@ export function KPISyncManager() {
     const [status, setStatus] = useState("");
     const [logs, setLogs] = useState<string[]>([]);
     const [sessionId, setSessionId] = useState<string>("");
-    const [allIndicators, setAllIndicators] = useState<string[]>([]);
+    const [allIndicators, setAllIndicators] = useState<{ id: string, name: string }[]>([]);
     const [selectedTarget, setSelectedTarget] = useState<string>("all");
     const [loadingList, setLoadingList] = useState(false);
     const router = useRouter();
@@ -213,6 +213,27 @@ export function KPISyncManager() {
         }
     };
 
+    const handleClear = async () => {
+        if (selectedTarget === "all") return;
+        const target = allIndicators.find(i => i.name === selectedTarget);
+        if (!target) return;
+
+        if (!window.confirm(`⚠️ 確定要清除指標「${selectedTarget}」的所有歷史資料嗎？\n這將移除所有彙總數據與異常明細，且無法復原。`)) return;
+
+        setSyncing(true);
+        setStatus(`正在清除 ${selectedTarget} 的資料...`);
+        const res = await clearIndicatorData(target.name, target.id);
+        setSyncing(false);
+
+        if (res.success) {
+            alert("✅ 資料已成功清理");
+            setOpen(false);
+            router.refresh();
+        } else {
+            alert("❌ 清理失敗: " + (res.message || "未知錯誤"));
+        }
+    };
+
     const handleClose = () => {
         setOpen(false);
         setSyncStep('idle');
@@ -239,7 +260,19 @@ export function KPISyncManager() {
                     {/* Target Selection */}
                     {!syncing && (
                         <div className="space-y-2">
-                            <label className="text-sm font-medium">選擇同步範圍：</label>
+                            <div className="flex justify-between items-center">
+                                <label className="text-sm font-medium">選擇同步範圍：</label>
+                                {selectedTarget !== "all" && (
+                                    <Button
+                                        variant="ghost"
+                                        size="sm"
+                                        className="text-rose-500 hover:text-rose-600 hover:bg-rose-50 h-7 text-xs font-bold"
+                                        onClick={handleClear}
+                                    >
+                                        🗑️ 清除本指標資料
+                                    </Button>
+                                )}
+                            </div>
                             <Select value={selectedTarget} onValueChange={setSelectedTarget} disabled={loadingList}>
                                 <SelectTrigger>
                                     <SelectValue placeholder="請選擇同步目標" />
@@ -247,9 +280,9 @@ export function KPISyncManager() {
                                 <SelectContent>
                                     <SelectGroup>
                                         <SelectItem value="all">🔄 同步全部指標</SelectItem>
-                                        {allIndicators.map(name => (
-                                            <SelectItem key={name} value={name}>
-                                                📊 {name}
+                                        {allIndicators.map(indicator => (
+                                            <SelectItem key={indicator.id} value={indicator.name}>
+                                                📊 {indicator.name}
                                             </SelectItem>
                                         ))}
                                     </SelectGroup>

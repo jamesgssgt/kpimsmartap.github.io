@@ -401,6 +401,23 @@ async function updateKPISummary(indicatorName: string, kpiid: string, formula: s
 }
 
 /**
+ * Clear data ONLY for a specific indicator
+ */
+export async function clearIndicatorData(indicatorName: string, kpiId: string) {
+    try {
+        const supabase = await createClient();
+        // 1. Delete from summary table
+        await supabase.from("KPI").delete().eq("indicator_name", indicatorName);
+        // 2. Delete from details (will cascade to kpi_ft_detail if FK is set, or we do both)
+        await supabase.from("kpi_detail").delete().eq("kpi_id", kpiId);
+        
+        return { success: true };
+    } catch (e: any) {
+        return { success: false, message: e.message };
+    }
+}
+
+/**
  * Manual Data Cleanup - User controlled
  */
 export async function clearAllSyncData() {
@@ -520,7 +537,8 @@ export async function syncSinglePage(
 
             const dId = getPractitionerId(res);
             const practitioner = pracMap.get(dId) as any;
-            const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
+            let dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
+            if (dId === "unknown" || !dName || dName === "unknown") dName = "未知";
             const dept = encounter?.serviceProvider?.display || "一般外科";
             const dDate = extractResourceDate(res);
 
