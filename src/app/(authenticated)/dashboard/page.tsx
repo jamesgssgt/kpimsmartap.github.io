@@ -119,12 +119,18 @@ export default async function DashboardPage(props: {
             .select("*")
             .eq("indicator_name", primaryIndicatorName);
 
-        // 4. PERFORMANCE: Fetch Trend Data (Minimal Columns)
-        const { data: trendDataRaw } = await supabase
+        // 4. PERFORMANCE: Fetch Trend Data (Minimal Columns) - NOW FILTERED
+        let trendQuery = supabase
             .from("kpi_detail")
             .select("data_date, numerator_value, denominator_value")
-            .eq("kpi_id", activeKpiId)
-            .order("data_date", { ascending: true });
+            .eq("kpi_id", activeKpiId);
+
+        if (deptFilters.length > 0) trendQuery = trendQuery.in("department", deptFilters);
+        if (doctorFilters.length > 0) trendQuery = trendQuery.in("doctor_name", doctorFilters);
+        if (startDate) trendQuery = trendQuery.gte("data_date", startDate);
+        if (endDate) trendQuery = trendQuery.lte("data_date", endDate);
+
+        const { data: trendDataRaw } = await trendQuery.order("data_date", { ascending: true });
 
         // 5. DATA COMPLETE: Fetch Abnormal Details with JOIN and Metadata Mapping
         const { data: ftMapping } = await supabase
