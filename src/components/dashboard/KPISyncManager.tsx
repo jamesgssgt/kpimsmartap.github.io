@@ -85,7 +85,7 @@ export function KPISyncManager() {
         setSyncStep('syncing');
         setLogs([]);
         setProgress({ current: 0, total: 0 });
-        setStatus("🚀 啟動 V13.6 分頁重試同步引擎...");
+        setStatus("🚀 啟動 V14.0 並行加速同步引擎...");
         addLog("🔗 正在建立安全同步階段並取得指標清單...");
         abortRef.current = false;
 
@@ -96,89 +96,110 @@ export function KPISyncManager() {
             const indicators = initRes.indicators || [];
             setProgress({ current: 0, total: indicators.length });
 
-            // 2. Loop Indicators
-            for (let i = 0; i < indicators.length; i++) {
-                // Check Abort
-                if (abortRef.current) {
-                    addLog("🛑 接獲手動中斷指令，正在安全退出...", "warning");
-                    break;
-                }
+            // 2. Implementation of a simple Worker Pool for Concurrency (Limit: 3)
+            const CONCURRENCY_LIMIT = 3;
+            const queue = [...indicators];
+            let completedCount = 0;
 
-                const name = indicators[i];
-                setStatus(`正在準備同步指標：${name}`);
-                addLog(`指標 [${i + 1}/${indicators.length}]: ${name}`);
+            const syncIndicatorWorker = async (name: string) => {
+                if (abortRef.current) return;
+                
+                try {
+                    addLog(`[${name}] 正在啟動同步任務...`);
+                    
+                    // 2.5 Get Total Count to calculate pages
+                    const countRes = await getFhirRecordCount(name);
+                    const totalRecords = countRes.success ? countRes.count : 0;
+                    const totalPages = Math.ceil(totalRecords / 300);
+                    
+                    if (countRes.success) {
+                        addLog(`📊 [${name}] 預計數據量：${totalRecords} 筆 (約 ${totalPages} 個分頁)`);
+                    }
 
-                // 2.5 Optional: Get Total Count for display
-                addLog(`⚙️ 正在統計伺服器數據量，請稍候...`);
-                const countRes = await getFhirRecordCount(name);
-                if (countRes.success) {
-                    addLog(`📊 預計處理筆數：${countRes.count} 筆 (${countRes.resourceType})`);
-                }
+                    // 3. Get Initial URL
+                    const urlRes = await getIndicatorInitialUrl(name);
+                    if (!urlRes.success) {
+                        addLog(`⚠️ [${name}] 初始化失敗: ${urlRes.message}`, 'warning');
+                        return;
+                    }
 
-                // 3. Get Initial URL for this indicator
-                const urlRes = await getIndicatorInitialUrl(name);
-                if (!urlRes.success) {
-                    addLog(`⚠️ 指標初始化失敗: ${urlRes.message}`, 'warning' as any);
-                    continue;
-                }
+                    let currentUrl: string | null = urlRes.url ?? null;
+                    let pageIdx = 1;
+                    let processedInIndicator = 0;
 
-                let currentUrl: string | null = urlRes.url ?? null;
-                let pageIdx = 1;
-                let processedInIndicator = 0;
+                    // 4. Paging Loop
+                    while (currentUrl) {
+                        if (abortRef.current) break;
 
-                // 4. Paging Loop for current indicator
-                while (currentUrl) {
-                    // Check Abort
-                    if (abortRef.current) break;
+                        let retryCount = 0;
+                        const MAX_RETRIES = 3;
+                        let success = false;
 
-                    let retryCount = 0;
-                    const MAX_RETRIES = 3;
-                    let success = false;
-
-                    while (retryCount < MAX_RETRIES && !success) {
-                        try {
-                            if (abortRef.current) break;
-                            if (!currentUrl) break;
-                            const pageRes = await syncSinglePage(name, currentUrl, sid, processedInIndicator, pageIdx);
-                            currentUrl = pageRes.nextUrl;
-                            processedInIndicator = pageRes.totalProcessedSoFar;
-                            pageIdx++;
-                            success = true;
-                            retryCount = 0; // 重置重試計次
-                        } catch (e: any) {
-                            retryCount++;
-                            if (retryCount >= MAX_RETRIES) {
-                                addLog(`🚨 分頁連續失敗 3 次，跳過此指標: ${name}`, 'error' as any);
-                                currentUrl = null; // 跳出當前指標循環
-                            } else {
-                                addLog(`⚠️ 網絡異常，正在進行第 ${retryCount} 次重載嘗試...`, 'warning' as any);
-                                await new Promise(r => setTimeout(r, 2000)); // 等待 2 秒後重試
+                        while (retryCount < MAX_RETRIES && !success) {
+                            try {
+                                if (abortRef.current) break;
+                                if (!currentUrl) break;
+                                
+                                setStatus(`⚙️ 並行處理中: ${name} (分頁 ${pageIdx}/${totalPages || '?'})`);
+                                
+                                const pageRes = await syncSinglePage(name, currentUrl, sid, processedInIndicator, pageIdx);
+                                currentUrl = pageRes.nextUrl;
+                                processedInIndicator = pageRes.totalProcessedSoFar;
+                                pageIdx++;
+                                success = true;
+                            } catch (e: any) {
+                                retryCount++;
+                                if (retryCount >= MAX_RETRIES) {
+                                    addLog(`🚨 [${name}] 分頁連續失敗 3 次，跳過此指標`, 'error');
+                                    currentUrl = null;
+                                } else {
+                                    addLog(`⚠️ [${name}] 網路異常頁面 ${pageIdx}，正在重試 (${retryCount}/3)...`, 'warning');
+                                    await new Promise(r => setTimeout(r, 2000));
+                                }
                             }
                         }
                     }
+                    
+                    if (!abortRef.current) {
+                        addLog(`✅ [${name}] 同步完成！共 ${processedInIndicator} 筆`, 'success');
+                    }
+                } catch (err: any) {
+                    addLog(`❌ [${name}] 異常終止: ${err.message}`, 'error');
+                } finally {
+                    completedCount++;
+                    setProgress(prev => ({ ...prev, current: completedCount }));
                 }
-                
-                if (!abortRef.current) {
-                    setProgress(prev => ({ ...prev, current: i + 1 }));
-                    addLog(`✅ 指標「${name}」同步完成！總計：${processedInIndicator} 筆`);
-                }
+            };
+
+            // Start workers
+            const workers = [];
+            for (let i = 0; i < Math.min(CONCURRENCY_LIMIT, indicators.length); i++) {
+                const startNext = async (): Promise<void> => {
+                    if (queue.length > 0 && !abortRef.current) {
+                        const name = queue.shift()!;
+                        await syncIndicatorWorker(name);
+                        return startNext();
+                    }
+                };
+                workers.push(startNext());
             }
 
+            await Promise.all(workers);
+
             if (abortRef.current) {
-                setStatus("⏹️ 同步已手動中斷");
+                setStatus("⏹️ 同步已由使用者手動中斷");
                 setSyncStep('idle');
             } else {
                 setSyncStep('completed');
-                setStatus("🎉 全數同步作業已順利完成！");
-                addLog("🎊 所有指標已通過分頁重試機制同步結束。");
+                setStatus("🎉 全數指標同步完成！總耗時大幅優化。");
+                addLog("🎊 並行加速同步引擎執行結束。");
             }
 
         } catch (e: any) {
             setSyncStep('error');
-            setStatus("❌ 同步發生錯誤");
-            addLog(`🚨 終止錯誤: ${e.message}`);
+            setStatus("❌ 核心引擎發生錯誤");
+            addLog(`🚨 系統錯誤: ${e.message}`);
         } finally {
-            // Always release lock
             await releaseSyncLock();
             setSyncing(false);
             router.refresh();

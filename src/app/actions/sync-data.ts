@@ -184,7 +184,7 @@ async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], 
     if (ids.length === 0) return [];
     const uniqueIds = Array.from(new Set(ids));
     const results: any[] = [];
-    const CHUNK_SIZE = 40; 
+    const CHUNK_SIZE = 60; // Increased from 40 to handle 300 records more efficiently
     
     const batches = [];
     for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
@@ -288,7 +288,7 @@ export async function getIndicatorInitialUrl(indicatorName: string) {
         let baseResource = dls?.[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
         
         const START_DATE = getStartDate();
-        const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=100`;
+        const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=300`;
         return { success: true, url, kpiid: kpi.kpiid, formula: kpi.formula };
     } catch (e: any) {
         return { success: false, message: e.message };
@@ -410,6 +410,7 @@ export async function syncSinglePage(
         const encIds = chunk.map((r: any) => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
         const pracIds = chunk.map((r: any) => r.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop()).filter(Boolean);
         
+        if (sid) await addSyncLog(sid, `⏳ 正在解析 ${chunk.length} 筆臨床資料並獲取關聯資源...`, "info", indicatorName);
         const [pats, encs, pracs] = await Promise.all([
             fetchByIds(activeFhirUrl, "Patient", patIds, accessToken, sid, indicatorName),
             fetchByIds(activeFhirUrl, "Encounter", encIds, accessToken, sid, indicatorName),
@@ -481,6 +482,7 @@ export async function syncSinglePage(
 
         // 4. Upsert DB
         if (batchDetails.length > 0) {
+            if (sid) await addSyncLog(sid, `💾 正在寫入資料庫 (${batchDetails.length} 筆)...`, "info", indicatorName);
             const { error: detailErr } = await supabase.from("kpi_detail").upsert(batchDetails, { onConflict: "fhir_id" });
             if (detailErr) {
                 await addSyncLog(sid, `❌ kpi_detail 寫入失敗: ${detailErr.message} (${detailErr.details || 'no details'})`, "error", indicatorName);
