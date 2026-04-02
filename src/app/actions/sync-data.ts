@@ -318,9 +318,9 @@ interface SyncPageResult {
 export async function getSyncIndicators() {
     try {
         const supabase = await createClient();
-        const { data, error } = await supabase.from("kpi_definitions").select("name").order("name");
+        const { data, error } = await supabase.from("kpi_definitions").select("kpiid, name").order("name");
         if (error) throw error;
-        return { success: true, data: data.map(d => d.name) };
+        return { success: true, data: data.map(d => ({ id: d.kpiid, name: d.name })) };
     } catch (e: any) {
         return { success: false, message: e.message };
     }

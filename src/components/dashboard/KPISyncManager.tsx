@@ -115,7 +115,7 @@ export function KPISyncManager() {
             
             let indicatorsToSync = initRes.indicators || [];
             if (selectedTarget !== "all") {
-                indicatorsToSync = indicatorsToSync.filter(name => name === selectedTarget);
+                indicatorsToSync = indicatorsToSync.filter((i: any) => (typeof i === 'string' ? i : i.name) === selectedTarget);
             }
             
             setProgress({ current: 0, total: indicatorsToSync.length });
@@ -125,7 +125,8 @@ export function KPISyncManager() {
             for (let i = 0; i < indicatorsToSync.length; i++) {
                 if (abortRef.current) break;
                 
-                const name = indicatorsToSync[i];
+                const item = indicatorsToSync[i];
+                const name = typeof item === 'string' ? item : item.name;
                 setStatus(`正在處理 (${i + 1}/${indicatorsToSync.length}): ${name}`);
                 addLog(`▶️ [${i + 1}/${indicatorsToSync.length}] 開始同步：${name}`);
 
