@@ -119,18 +119,12 @@ export default async function DashboardPage(props: {
             .select("*")
             .eq("indicator_name", primaryIndicatorName);
 
-        // 4. PERFORMANCE: Fetch Trend Data (Minimal Columns) - NOW FILTERED
-        let trendQuery = supabase
+        // 4. PERFORMANCE: Fetch Trend Data (Minimal Columns)
+        const { data: trendDataRaw } = await supabase
             .from("kpi_detail")
             .select("data_date, numerator_value, denominator_value")
-            .eq("kpi_id", activeKpiId);
-
-        if (deptFilters.length > 0) trendQuery = trendQuery.in("department", deptFilters);
-        if (doctorFilters.length > 0) trendQuery = trendQuery.in("doctor_name", doctorFilters);
-        if (startDate) trendQuery = trendQuery.gte("data_date", startDate);
-        if (endDate) trendQuery = trendQuery.lte("data_date", endDate);
-
-        const { data: trendDataRaw } = await trendQuery.order("data_date", { ascending: true });
+            .eq("kpi_id", activeKpiId)
+            .order("data_date", { ascending: true });
 
         // 5. DATA COMPLETE: Fetch Abnormal Details with JOIN and Metadata Mapping
         const { data: ftMapping } = await supabase
@@ -156,7 +150,7 @@ export default async function DashboardPage(props: {
         const { data: filterMetadata } = await supabase.from("KPI").select("department, doctor");
         const departments = Array.from(new Set(filterMetadata?.map(d => d.department).filter(Boolean)));
         const doctorSet = new Set<string>();
-        const doctors: {name: string, dept: string}[] = [];
+        const doctors: { name: string, dept: string }[] = [];
         filterMetadata?.forEach(d => {
             if (d.doctor && !doctorSet.has(d.doctor)) {
                 doctorSet.add(d.doctor);
@@ -202,7 +196,7 @@ export default async function DashboardPage(props: {
                 value: val,
                 unit: agg.unit || "%",
                 status,
-                patient_id: "", patient_gender: "", patient_birthday: "", 
+                patient_id: "", patient_gender: "", patient_birthday: "",
                 report_date: agg.report_date || "", // USE ACTUAL CLINICAL DATE
                 admission_date: "", discharge_date: "", op_start: "", op_end: "", abnormal_reason: ""
             };
@@ -266,15 +260,13 @@ export default async function DashboardPage(props: {
             return item;
         });
 
-        // Logic: End Date = Latest clinical data date. Start Date = Jan 1st of that year, max back 6 months.
-        const maxDataDate = trendDataRaw && trendDataRaw.length > 0 
-            ? new Date(Math.max(...trendDataRaw.map(r => new Date(r.data_date as string).getTime())))
-            : new Date();
+        // Step 11: Dynamic Date Filter Defaults (Based on Indicator's own KPI Summary dates)
+        const kpiDates = kpiSummaryData?.map(d => d.report_date).filter(Boolean) as string[] || [];
+        const maxReportDate = kpiDates.length > 0 ? kpiDates.sort().reverse()[0] : new Date().toISOString().split('T')[0];
         
-        const globalMaxDateStr = maxDataDate.toISOString().split('T')[0];
-        
-        let calculatedStartDate = new Date(maxDataDate.getFullYear(), 0, 1);
-        const sixMonthsAgo = new Date(maxDataDate);
+        const globalMaxDateStr = maxReportDate;
+        let calculatedStartDate = new Date(new Date(maxReportDate).getFullYear(), 0, 1);
+        const sixMonthsAgo = new Date(maxReportDate);
         sixMonthsAgo.setMonth(sixMonthsAgo.getMonth() - 6);
         if (calculatedStartDate < sixMonthsAgo) calculatedStartDate = sixMonthsAgo;
         
@@ -286,7 +278,8 @@ export default async function DashboardPage(props: {
                 <div className="space-y-4">
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
                         <div className="space-y-1">
-                          <h2 className="text-2xl font-bold tracking-tight text-primary">KPIM Smart Dashboard</h2>
+                            <h2 className="text-2xl font-bold tracking-tight text-primary">KPIM Smart Dashboard</h2>
+                            <p className="text-sm text-muted-foreground">效能優化版 v6 - 基於摘要數據即時監控</p>
                         </div>
                         <div className="flex items-center space-x-2">
                             <div className="flex flex-col items-end">
@@ -334,7 +327,7 @@ export default async function DashboardPage(props: {
                     </div>
 
                     <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單`} />
+                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單 (關聯明細模式)`} />
                     </div>
                 </div>
 

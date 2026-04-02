@@ -108,7 +108,7 @@ async function fetchFhir(url: string, accessToken: string, sid?: string, indicat
     }
     const headers: Record<string, string> = { 'Accept': 'application/fhir+json' };
     if (accessToken) headers['Authorization'] = `Bearer ${accessToken}`;
-    
+
     const res = await fetchWithRetry(url, { headers }, 3, sid, indicatorName);
     if (!res.ok) {
         const errText = await res.text();
@@ -127,17 +127,17 @@ async function fetchFhir(url: string, accessToken: string, sid?: string, indicat
  */
 function extractResourceDate(res: any): string {
     // Priority 1: Clinical event time
-    const clinicalDate = res.performedDateTime || 
-                         res.performedPeriod?.end || 
-                         res.performedPeriod?.start ||
-                         res.period?.end || 
-                         res.period?.start ||
-                         res.occurrenceDateTime || 
-                         res.effectiveDateTime ||
-                         res.authoredOn;
-    
+    const clinicalDate = res.performedDateTime ||
+        res.performedPeriod?.end ||
+        res.performedPeriod?.start ||
+        res.period?.end ||
+        res.period?.start ||
+        res.occurrenceDateTime ||
+        res.effectiveDateTime ||
+        res.authoredOn;
+
     if (clinicalDate) return String(clinicalDate).split('T')[0];
-    
+
     // Priority 2: Meta last updated (as fallback for "when this happened")
     if (res.meta?.lastUpdated) return String(res.meta.lastUpdated).split('T')[0];
 
@@ -168,7 +168,7 @@ async function fetchFhirAll(url: string, timeoutMs: number, accessToken: string,
 
             nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
             pageCount++;
-            
+
             if (pageCount % 10 === 0) {
                 console.log(`[Sync] ${indicatorName} fetched ${results.length} resources...`);
             }
@@ -185,7 +185,7 @@ async function fetchByIds(baseUrl: string, resourceType: string, ids: string[], 
     const uniqueIds = Array.from(new Set(ids));
     const results: any[] = [];
     const CHUNK_SIZE = 60; // Increased from 40 to handle 300 records more efficiently
-    
+
     const batches = [];
     for (let i = 0; i < uniqueIds.length; i += CHUNK_SIZE) {
         batches.push(uniqueIds.slice(i, i + CHUNK_SIZE));
@@ -234,24 +234,20 @@ function getValueByPath(obj: any, path: string) {
     return current;
 }
 
-function evaluateCondition(resource: any, condition: any, overrideValue?: any): boolean {
+function evaluateCondition(resource: any, condition: any): boolean {
     const { path, operator, value } = condition;
-    
-    // Use manual value if provided (e.g., calculated fields like period.duration)
-    // Otherwise fetch by path
-    const actualValue = overrideValue !== undefined ? overrideValue : (path ? getValueByPath(resource, path) : undefined);
-    
-    if (actualValue === undefined || actualValue === null) return false;
-
+    if (!path) return true; // Empty path matches everything
+    const actualValue = getValueByPath(resource, path);
     const check = (val: any) => {
+        if (val === undefined || val === null) return false;
         const strVal = String(val);
         const strTarget = String(value);
         switch (operator) {
             case 'equals': return strVal === strTarget || (strTarget.includes(',') && strTarget.split(',').map(s => s.trim()).includes(strVal));
             case 'contains': return strVal.includes(strTarget);
-            case 'greaterThan': 
+            case 'greaterThan':
             case 'greater_than': return parseFloat(strVal) > parseFloat(strTarget);
-            case 'lessThan': 
+            case 'lessThan':
             case 'less_than': return parseFloat(strVal) < parseFloat(strTarget);
             case 'exists': return true;
             default: return strVal == strTarget;
@@ -267,23 +263,18 @@ function evaluateCondition(resource: any, condition: any, overrideValue?: any): 
 function getPractitionerId(res: any): string {
     if (!res) return "unknown";
     const rt = res.resourceType;
-    let ref = "";
     if (rt === 'Encounter') {
-        const pRef = res.participant?.find((p: any) => p.individual?.reference?.includes('Practitioner/'))?.individual?.reference;
-        const prRef = res.practitioner?.find((p: any) => p.reference?.includes('Practitioner/'))?.reference;
-        ref = pRef || prRef || "";
+        const ref = res.participant?.[0]?.individual?.reference || res.practitioner?.[0]?.reference;
+        return ref?.split(/[:\/]/).pop() || "unknown";
     }
     if (rt === 'Procedure') {
-        ref = res.performer?.find((p: any) => p.actor?.reference?.includes('Practitioner/'))?.actor?.reference || "";
+        return res.performer?.[0]?.actor?.reference?.split(/[:\/]/).pop() || "unknown";
     }
     if (rt === 'Observation' || rt === 'MedicationAdministration') {
-        ref = res.performer?.find((p: any) => 
-            p.reference?.includes('Practitioner/') || 
-            p.actor?.reference?.includes('Practitioner/') || 
-            p.individual?.reference?.includes('Practitioner/')
-        )?.reference || "";
+        const ref = res.performer?.[0]?.reference || res.performer?.[0]?.actor?.reference;
+        return ref?.split(/[:\/]/).pop() || "unknown";
     }
-    return ref ? ref.split(/[:\/]/).pop()! : "unknown";
+    return "unknown";
 }
 
 /**
@@ -291,19 +282,25 @@ function getPractitionerId(res: any): string {
  */
 function evaluateKiftSteps(res: any, steps: any[]): boolean {
     if (!steps || steps.length === 0) return false;
-    
+
     // Default logic: All steps must be true (AND)
     return steps.every(step => {
-        let actualValue: any = undefined;
-        
-        // Special case: period.duration (Calculated field in hours)
+        let actualValue: any;
+
+        // Special case: period.duration (Calculated field)
         if (step.path === 'period.duration' && res.period?.start && res.period?.end) {
             const start = new Date(res.period.start).getTime();
             const end = new Date(res.period.end).getTime();
-            actualValue = (end - start) / 3600000;
+            actualValue = (end - start) / 3600000; // Result in hours
+        } else {
+            actualValue = getValueByPath(res, step.path);
         }
-        
-        return evaluateCondition(res, step, actualValue);
+
+        return evaluateCondition(res, {
+            path: step.path,
+            operator: step.operator,
+            value: step.value
+        });
     });
 }
 
@@ -339,7 +336,7 @@ export async function getIndicatorInitialUrl(indicatorName: string) {
 
         const { data: dls } = await supabase.from("kpi_dl").select("*").eq("kpiid", kpi.kpiid).eq("kpi_dl_type", 1).order('seq');
         let baseResource = dls?.[0]?.kpi_id_fhir_resource || (indicatorName.includes("手術") ? "Procedure" : "Encounter");
-        
+
         const START_DATE = getStartDate();
         const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_count=300`;
         return { success: true, url, kpiid: kpi.kpiid, formula: kpi.formula };
@@ -360,7 +357,7 @@ export async function getFhirRecordCount(indicatorName: string) {
         const START_DATE = getStartDate();
         const url = `${activeFhirUrl}/${baseResource}?date=ge${START_DATE}&_summary=count`;
         let accessToken = "";
-        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e) {}
+        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e) { }
         const res = await fetchFhir(url, accessToken);
         return { success: true, count: res?.total || 0, resourceType: baseResource };
     } catch (e: any) {
@@ -380,12 +377,12 @@ interface SyncResult {
  */
 async function updateKPISummary(indicatorName: string, kpiid: string, formula: string) {
     const supabase = await createClient();
-    
+
     // Aggregate data from kpi_detail
-    const { data: summary } = await supabase.rpc('get_kpi_summary_by_indicator', { 
-        target_indicator_name: indicatorName 
+    const { data: summary } = await supabase.rpc('get_kpi_summary_by_indicator', {
+        target_indicator_name: indicatorName
     });
-    
+
     if (summary && summary.length > 0) {
         for (const s of summary) {
             await supabase.from("KPI").upsert({
@@ -422,16 +419,16 @@ export async function clearAllSyncData() {
  * This processes exactly one page (100 records) and returns.
  */
 export async function syncSinglePage(
-    indicatorName: string, 
-    url: string, 
-    sessionId: string, 
+    indicatorName: string,
+    url: string,
+    sessionId: string,
     totalProcessedSoFar: number,
     pageIdx: number
 ): Promise<SyncPageResult> {
     try {
         const supabase = await createClient();
         const sid = sessionId;
-        
+
         // Configuration
         const { data: sysData } = await supabase.from("system").select("SysValue").eq("SysCode", "FHIR_SERVER").single();
         const activeFhirUrl = sysData?.SysValue || FHIR_SERVER_URL;
@@ -457,9 +454,9 @@ export async function syncSinglePage(
                 });
             }
         }
-        
+
         let accessToken = "";
-        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e: any) {}
+        try { accessToken = await getBackendAccessToken(activeFhirUrl) || ""; } catch (e: any) { }
 
         const resTypeMatch = url.match(/\/([A-Za-z]+)\?/);
         const baseResource = resTypeMatch ? resTypeMatch[1] : (indicatorName.includes("手術") ? "Procedure" : "Encounter");
@@ -475,7 +472,7 @@ export async function syncSinglePage(
         const patIds = chunk.map((r: any) => r.subject?.reference?.split('/').pop()).filter(Boolean);
         const encIds = chunk.map((r: any) => (baseResource === 'Encounter' ? r.id : r.encounter?.reference?.split('/').pop())).filter(Boolean);
         const pracIds = chunk.map((r: any) => getPractitionerId(r)).filter((id: string) => id !== "unknown");
-        
+
         if (sid) await addSyncLog(sid, `⏳ 正在解析 ${chunk.length} 筆臨床資料並獲取關聯資源...`, "info", indicatorName);
         const [pats, encs, pracs] = await Promise.all([
             fetchByIds(activeFhirUrl, "Patient", patIds, accessToken, sid, indicatorName),
@@ -523,28 +520,24 @@ export async function syncSinglePage(
 
             const dId = getPractitionerId(res);
             const practitioner = pracMap.get(dId) as any;
-            const dName = practitioner 
-                ? (practitioner.name?.[0]?.text || practitioner.name?.[0]?.family || dId) 
-                : (dId === "unknown" ? "其他" : dId);
-
+            const dName = practitioner?.name?.[0]?.text || practitioner?.name?.[0]?.family || dId;
             const dept = encounter?.serviceProvider?.display || "一般外科";
             const dDate = extractResourceDate(res);
 
             batchDetails.push({
                 fhir_id: res.id,
-                kpi_id: kpiDef.kpiid, 
+                kpi_id: kpiDef.kpiid,
                 data_date: dDate,
-                department: dept, 
-                doctor_id: dId, 
+                department: dept,
+                doctor_id: dId,
                 doctor_name: dName,
-                hospital_id: "台北綜合醫院", 
-                patient_id: pId, 
+                hospital_id: "台北綜合醫院",
+                patient_id: pId,
                 patient_gender: patient.gender,
-                patient_birth_date: patient.birthDate, 
+                patient_birth_date: patient.birthDate,
                 numerator_value: isNumerator ? 1 : 0,
-                denominator_value: 1, 
-                kpi_value: isNumerator ? 1 : 0,
-                Modifieddate: new Date().toISOString()
+                denominator_value: 1,
+                kpi_value: isNumerator ? 1 : 0
             });
 
             if (ftInf && ftInf.length > 0) {
@@ -578,7 +571,7 @@ export async function syncSinglePage(
                         kpi_detail_id: fhirToUuid.get(fhir_id)
                     };
                 }).filter(f => f.kpi_detail_id);
-                
+
                 if (ftToSave.length > 0) {
                     const { error: ftErr } = await supabase.from("kpi_ft_detail").upsert(ftToSave, { onConflict: "kpi_detail_id" });
                     if (ftErr) {
@@ -595,7 +588,7 @@ export async function syncSinglePage(
             .eq("kpi_id", kpiDef.kpiid);
 
         const nextUrl = bundle.link?.find((l: any) => l.relation === 'next')?.url || null;
-        
+
         // Recalculate summary every 5 pages or at end
         if (pageIdx % 5 === 0 || !nextUrl) {
             await updateKPISummary(indicatorName, kpiDef.kpiid, kpiDef.formula);
@@ -624,7 +617,7 @@ export async function syncFhirIndicatorBatch(indicatorName: string, sessionId?: 
 export async function syncFhirData(sessionId?: string) {
     const supabase = await createClient();
     const sid = sessionId || crypto.randomUUID();
-    
+
     // Check stale lock (same as before)
     const { data: lock } = await supabase.from("system").select("SysValue, Modifieddate").eq("SysCode", "SYNC_LOCK").single();
     if (lock?.SysValue === "TRUE") {
@@ -636,9 +629,9 @@ export async function syncFhirData(sessionId?: string) {
             return { success: false, message: "⚠️ 同步作業正在進行中，或前次任務尚未逾時，請稍候。" };
         }
     }
-    
+
     await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "TRUE", Modifieddate: new Date().toISOString() });
-    
+
     try {
         // Just return indicators to frontend for client-side loop
         const { data: indicators } = await getSyncIndicators();
@@ -656,4 +649,11 @@ export async function releaseSyncLock() {
     } catch (e) {
         return { success: false };
     }
+}
+const supabase = await createClient();
+await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "FALSE", Modifieddate: new Date().toISOString() });
+return { success: true };
+    } catch (e) {
+    return { success: false };
+}
 }
