@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/dialog";
 import { Loader2, RefreshCw } from "lucide-react";
 import { getSyncIndicators, getIndicatorInitialUrl, getFhirRecordCount, syncSinglePage, getSyncLogs, syncFhirData, releaseSyncLock } from "@/app/actions/sync-data";
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { useRouter } from "next/navigation";
 import { v4 as uuidv4 } from "uuid";
 
@@ -24,6 +25,9 @@ export function KPISyncManager() {
     const [status, setStatus] = useState("");
     const [logs, setLogs] = useState<string[]>([]);
     const [sessionId, setSessionId] = useState<string>("");
+    const [allIndicators, setAllIndicators] = useState<string[]>([]);
+    const [selectedTarget, setSelectedTarget] = useState<string>("all");
+    const [loadingList, setLoadingList] = useState(false);
     const router = useRouter();
 
     const addLog = (msg: string, status: 'info' | 'success' | 'warning' | 'error' = 'info') => {
@@ -39,6 +43,21 @@ export function KPISyncManager() {
             return [fullMsg, ...prev];
         });
     };
+
+    // Fetch indicator list for select
+    useEffect(() => {
+        const fetchList = async () => {
+            if (open) {
+                setLoadingList(true);
+                const res = await getSyncIndicators();
+                if (res.success && res.data) {
+                    setAllIndicators(res.data);
+                }
+                setLoadingList(false);
+            }
+        };
+        fetchList();
+    }, [open]);
 
     // Polling logic for remote logs
     useEffect(() => {
@@ -85,29 +104,33 @@ export function KPISyncManager() {
         setSyncStep('syncing');
         setLogs([]);
         setProgress({ current: 0, total: 0 });
-        setStatus("🚀 啟動 V14.0 並行加速同步引擎...");
+        setStatus("🚀 啟動 V15.0 順序同步引擎...");
         addLog("🔗 正在建立安全同步階段並取得指標清單...");
         abortRef.current = false;
 
         try {
-            // 1. Initial Handshake & Get Indicators
+            // 1. Initial Handshake & Filter Indicators
             const initRes = await syncFhirData(sid);
             if (!initRes.success) throw new Error(initRes.message);
-            const indicators = initRes.indicators || [];
-            setProgress({ current: 0, total: indicators.length });
+            
+            let indicatorsToSync = initRes.indicators || [];
+            if (selectedTarget !== "all") {
+                indicatorsToSync = indicatorsToSync.filter(name => name === selectedTarget);
+            }
+            
+            setProgress({ current: 0, total: indicatorsToSync.length });
+            addLog(`📋 待同步清單確認：共 ${indicatorsToSync.length} 項指標`);
 
-            // 2. Implementation of a simple Worker Pool for Concurrency (Limit: 3)
-            const CONCURRENCY_LIMIT = 3;
-            const queue = [...indicators];
-            let completedCount = 0;
-
-            const syncIndicatorWorker = async (name: string) => {
-                if (abortRef.current) return;
+            // 2. Sequential Loop (穩定顯示關鍵)
+            for (let i = 0; i < indicatorsToSync.length; i++) {
+                if (abortRef.current) break;
                 
+                const name = indicatorsToSync[i];
+                setStatus(`正在處理 (${i + 1}/${indicatorsToSync.length}): ${name}`);
+                addLog(`▶️ [${i + 1}/${indicatorsToSync.length}] 開始同步：${name}`);
+
                 try {
-                    addLog(`[${name}] 正在啟動同步任務...`);
-                    
-                    // 2.5 Get Total Count to calculate pages
+                    // 2.5 Get Total Count
                     const countRes = await getFhirRecordCount(name);
                     const totalRecords = countRes.success ? countRes.count : 0;
                     const totalPages = Math.ceil(totalRecords / 300);
@@ -120,7 +143,7 @@ export function KPISyncManager() {
                     const urlRes = await getIndicatorInitialUrl(name);
                     if (!urlRes.success) {
                         addLog(`⚠️ [${name}] 初始化失敗: ${urlRes.message}`, 'warning');
-                        return;
+                        continue;
                     }
 
                     let currentUrl: string | null = urlRes.url ?? null;
@@ -140,7 +163,7 @@ export function KPISyncManager() {
                                 if (abortRef.current) break;
                                 if (!currentUrl) break;
                                 
-                                setStatus(`⚙️ 並行處理中: ${name} (分頁 ${pageIdx}/${totalPages || '?'})`);
+                                setStatus(`⚙️ 處理中: ${name} (分頁 ${pageIdx}/${totalPages || '?'})`);
                                 
                                 const pageRes = await syncSinglePage(name, currentUrl, sid, processedInIndicator, pageIdx);
                                 currentUrl = pageRes.nextUrl;
@@ -166,38 +189,22 @@ export function KPISyncManager() {
                 } catch (err: any) {
                     addLog(`❌ [${name}] 異常終止: ${err.message}`, 'error');
                 } finally {
-                    completedCount++;
-                    setProgress(prev => ({ ...prev, current: completedCount }));
+                    setProgress(prev => ({ ...prev, current: i + 1 }));
                 }
-            };
-
-            // Start workers
-            const workers = [];
-            for (let i = 0; i < Math.min(CONCURRENCY_LIMIT, indicators.length); i++) {
-                const startNext = async (): Promise<void> => {
-                    if (queue.length > 0 && !abortRef.current) {
-                        const name = queue.shift()!;
-                        await syncIndicatorWorker(name);
-                        return startNext();
-                    }
-                };
-                workers.push(startNext());
             }
-
-            await Promise.all(workers);
 
             if (abortRef.current) {
                 setStatus("⏹️ 同步已由使用者手動中斷");
                 setSyncStep('idle');
             } else {
                 setSyncStep('completed');
-                setStatus("🎉 全數指標同步完成！總耗時大幅優化。");
-                addLog("🎊 並行加速同步引擎執行結束。");
+                setStatus(selectedTarget === "all" ? "🎉 全數指標同步完成！" : `🎉 指標「${selectedTarget}」同步完成！`);
+                addLog("🎊 同步引擎執行結束。");
             }
 
         } catch (e: any) {
             setSyncStep('error');
-            setStatus("❌ 核心引擎發生錯誤");
+            setStatus("❌ 引擎執行發生錯誤");
             addLog(`🚨 系統錯誤: ${e.message}`);
         } finally {
             await releaseSyncLock();
@@ -222,13 +229,35 @@ export function KPISyncManager() {
             </DialogTrigger>
             <DialogContent className="sm:max-w-[600px] w-[95vw]" onInteractOutside={(e) => syncing && e.preventDefault()}>
                 <DialogHeader>
-                    <DialogTitle>分階段同步與計算</DialogTitle>
+                    <DialogTitle>指標同步與計算</DialogTitle>
                     <DialogDescription>
-                        按指標分批同步 FHIR 資料，確保數據準確並避免伺服器超時。
+                        您可以選擇同步全部指標或指定特定的單一指標。
                     </DialogDescription>
                 </DialogHeader>
 
-                <div className="py-6 space-y-6">
+                <div className="py-4 space-y-4">
+                    {/* Target Selection */}
+                    {!syncing && (
+                        <div className="space-y-2">
+                            <label className="text-sm font-medium">選擇同步範圍：</label>
+                            <Select value={selectedTarget} onValueChange={setSelectedTarget} disabled={loadingList}>
+                                <SelectTrigger>
+                                    <SelectValue placeholder="請選擇同步目標" />
+                                </SelectTrigger>
+                                <SelectContent>
+                                    <SelectGroup>
+                                        <SelectItem value="all">🔄 同步全部指標</SelectItem>
+                                        {allIndicators.map(name => (
+                                            <SelectItem key={name} value={name}>
+                                                📊 {name}
+                                            </SelectItem>
+                                        ))}
+                                    </SelectGroup>
+                                </SelectContent>
+                            </Select>
+                        </div>
+                    )}
+
                     {/* Status and Progress */}
                     <div className="space-y-3">
                         <div className="flex justify-between items-center text-sm font-medium">
