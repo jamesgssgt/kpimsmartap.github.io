@@ -176,17 +176,17 @@ export default async function DashboardPage(props: {
         const globalMinDateStr = `${maxDataDateStr.split('-')[0]}-01-01`; // Jan 1st of the same year
         
         // Use URL param if exists, otherwise use calculated default
+        const currentStartDate = startDate || globalMinDateStr;
         const currentEndDate = endDate || globalMaxDateStr;
         const targetAbnormalMonth = currentEndDate.substring(0, 7);
-        const startOfMonth = `${targetAbnormalMonth}-01`;
 
-        // 7. Calculate Latest Metrics (KPITable) - Precise Monthly Accumulation Logic
+        // 7. Calculate Latest Metrics (KPITable) - Precise FULL RANGE Accumulation Logic
         const isDrillDown = deptFilters.length > 0;
         
-        // Filter: Data must be within the TARGET MONTH and up to the selected END DATE
+        // Filter: Data must be within the SELECTED RANGE
         const monthFilteredData = kpiSummaryData?.filter(d => 
             d.report_date && 
-            d.report_date >= startOfMonth && 
+            d.report_date >= currentStartDate && 
             d.report_date <= currentEndDate
         ) || [];
         
@@ -344,7 +344,7 @@ export default async function DashboardPage(props: {
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標監控] ${primaryIndicatorName} - 累計報表 (至 ${currentEndDate})`}
+                            title={`[指標監控] ${primaryIndicatorName} - 累計報表 (${currentStartDate} ~ ${currentEndDate})`}
                             viewType={isDrillDown ? "doctor" : "department"}
                             numeratorLabel={numeratorLabel}
                             denominatorLabel={denominatorLabel}
@@ -367,7 +367,7 @@ export default async function DashboardPage(props: {
                     </div>
 
                     <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單`} />
+                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`[資料最後一個月] ${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單`} />
                     </div>
                 </div>
 
