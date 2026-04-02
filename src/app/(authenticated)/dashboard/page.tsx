@@ -287,7 +287,6 @@ export default async function DashboardPage(props: {
                     <div className="flex flex-col md:flex-row md:items-center justify-between space-y-2 md:space-y-0">
                         <div className="space-y-1">
                           <h2 className="text-2xl font-bold tracking-tight text-primary">KPIM Smart Dashboard</h2>
-                          <p className="text-sm text-muted-foreground">效能優化版 v6 - 基於摘要數據即時監控</p>
                         </div>
                         <div className="flex items-center space-x-2">
                             <div className="flex flex-col items-end">
@@ -335,7 +334,7 @@ export default async function DashboardPage(props: {
                     </div>
 
                     <div className="space-y-4">
-                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單 (關聯明細模式)`} />
+                        <AbnormalTable items={abnormalItems.filter(i => i.report_date?.startsWith(targetAbnormalMonth))} title={`${primaryIndicatorName} (${targetAbnormalMonth}) 異常詳細清單`} />
                     </div>
                 </div>
 
