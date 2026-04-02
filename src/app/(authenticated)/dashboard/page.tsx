@@ -168,9 +168,9 @@ export default async function DashboardPage(props: {
         const todayStr = new Date().toLocaleDateString('en-CA'); // Gets YYYY-MM-DD in local time
         const kpiDates = kpiSummaryData?.map(d => d.report_date).filter(Boolean) as string[] || [];
         
-        // Find the LATEST date for THIS indicator in the DB, but NEVER greater than today
-        let maxDataDateStr = kpiDates.length > 0 ? kpiDates.sort().reverse()[0] : todayStr;
-        if (maxDataDateStr > todayStr) maxDataDateStr = todayStr;
+        // Find the LATEST date for THIS indicator in the DB, but EXCLUDE future dates (clamped to today)
+        const validDates = kpiDates.filter(d => d <= todayStr).sort().reverse();
+        let maxDataDateStr = validDates.length > 0 ? validDates[0] : todayStr;
         
         const globalMaxDateStr = maxDataDateStr;
         const globalMinDateStr = `${maxDataDateStr.split('-')[0]}-01-01`; // Jan 1st of the same year
