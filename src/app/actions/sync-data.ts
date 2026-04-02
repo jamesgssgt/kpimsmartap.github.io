@@ -650,10 +650,3 @@ export async function releaseSyncLock() {
         return { success: false };
     }
 }
-const supabase = await createClient();
-await supabase.from("system").upsert({ SysCode: "SYNC_LOCK", SysValue: "FALSE", Modifieddate: new Date().toISOString() });
-return { success: true };
-    } catch (e) {
-    return { success: false };
-}
-}
