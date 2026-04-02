@@ -165,28 +165,37 @@ export default async function DashboardPage(props: {
         });
 
         // Step 11: Dynamic Date Filter Defaults (Based on Indicator's own KPI Summary dates)
-        const todayStr = new Date().toISOString().split('T')[0];
+        const todayStr = new Date().toLocaleDateString('en-CA'); // Gets YYYY-MM-DD in local time
         const kpiDates = kpiSummaryData?.map(d => d.report_date).filter(Boolean) as string[] || [];
-        // Max date is the latest between database and today (clamped to today)
+        
+        // Find the LATEST date for THIS indicator in the DB, but NEVER greater than today
         let maxDataDateStr = kpiDates.length > 0 ? kpiDates.sort().reverse()[0] : todayStr;
         if (maxDataDateStr > todayStr) maxDataDateStr = todayStr;
         
         const globalMaxDateStr = maxDataDateStr;
-        const globalMinDateStr = `${maxDataDateStr.split('-')[0]}-01-01`; // Jan 1st of same year
-        const targetAbnormalMonth = endDate ? endDate.substring(0, 7) : globalMaxDateStr.substring(0, 7);
+        const globalMinDateStr = `${maxDataDateStr.split('-')[0]}-01-01`; // Jan 1st of the same year
+        
+        // Use URL param if exists, otherwise use calculated default
+        const currentEndDate = endDate || globalMaxDateStr;
+        const targetAbnormalMonth = currentEndDate.substring(0, 7);
+        const startOfMonth = `${targetAbnormalMonth}-01`;
 
-        // 7. Calculate Latest Metrics (KPITable) - Now with GroupBy and Month Filtering
+        // 7. Calculate Latest Metrics (KPITable) - Precise Monthly Accumulation Logic
         const isDrillDown = deptFilters.length > 0;
         
-        // Filter by the TARGET MONTH (The last month of the filter range)
-        const monthFilteredData = kpiSummaryData?.filter(d => d.report_date === targetAbnormalMonth) || [];
+        // Filter: Data must be within the TARGET MONTH and up to the selected END DATE
+        const monthFilteredData = kpiSummaryData?.filter(d => 
+            d.report_date && 
+            d.report_date >= startOfMonth && 
+            d.report_date <= currentEndDate
+        ) || [];
         
         // Apply Dept/Doctor filter (if any)
         let monitoredPoints = monthFilteredData;
         if (deptFilters.length > 0) monitoredPoints = monitoredPoints.filter(p => deptFilters.includes(p.department));
         if (doctorFilters.length > 0) monitoredPoints = monitoredPoints.filter(p => doctorFilters.includes(p.doctor));
 
-        // GROUP BY logic to prevent duplicate department entries
+        // GROUP BY logic to prevent duplicate entries and sum up daily snapshots in the range
         const groupedMap = new Map<string, any>();
         monitoredPoints.forEach(agg => {
             const key = isDrillDown ? (agg.doctor || "未知") : (agg.department || "其他");
@@ -194,15 +203,18 @@ export default async function DashboardPage(props: {
                 n: 0, d: 0, unit: agg.unit || "%", 
                 indicator_name: agg.indicator_name, 
                 indicator_def: agg.indicator_def,
-                report_date: agg.report_date,
+                latest_report_date: agg.report_date, // track latest date in this group for label
                 department: agg.department,
                 doctor: agg.doctor,
                 created_at: agg.created_at
             };
+            
+            // Summing up (Assuming daily records. If snapshots, logic might vary, but user SQL uses sum)
             groupedMap.set(key, {
                 ...existing,
                 n: existing.n + (agg.numerator || 0),
-                d: existing.d + (agg.denominator || 0)
+                d: existing.d + (agg.denominator || 0),
+                latest_report_date: agg.report_date > (existing.latest_report_date || "") ? agg.report_date : existing.latest_report_date
             });
         });
 
@@ -238,7 +250,7 @@ export default async function DashboardPage(props: {
                 unit: data.unit,
                 status,
                 patient_id: "", patient_gender: "", patient_birthday: "",
-                report_date: data.report_date || "",
+                report_date: data.latest_report_date || "",
                 admission_date: "", discharge_date: "", op_start: "", op_end: "", abnormal_reason: ""
             };
         }).sort((a, b) => b.value - a.value);
@@ -332,7 +344,7 @@ export default async function DashboardPage(props: {
                     <div className="space-y-4">
                         <KPITable
                             items={latestMetrics}
-                            title={`[指標監控] ${primaryIndicatorName} - ${targetAbnormalMonth} 累計報表`}
+                            title={`[指標監控] ${primaryIndicatorName} - 累計報表 (至 ${currentEndDate})`}
                             viewType={isDrillDown ? "doctor" : "department"}
                             numeratorLabel={numeratorLabel}
                             denominatorLabel={denominatorLabel}
