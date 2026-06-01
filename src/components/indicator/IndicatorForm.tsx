@@ -25,6 +25,80 @@ interface Props {
     focusSection?: 'num' | 'den' | null;
 }
 
+const generateFhirGetRequest = (steps: CalculationStep[]) => {
+    if (!steps || steps.length === 0) {
+        return "GET [Base_URL]/Encounter?_total=accurate";
+    }
+
+    const validSteps = steps.filter(s => s.valueType === 'fhir_filter' && s.resourceType);
+    const mainResource = validSteps[0]?.resourceType || "Encounter";
+
+    const queryParams: string[] = [];
+    let hasSubjectLink = false;
+
+    validSteps.forEach(step => {
+        if (!step.path) return;
+
+        let param = step.path;
+        let val = step.value || "";
+
+        if (param.includes('subject') || param.includes('patient') || param.includes('Patient')) {
+            hasSubjectLink = true;
+        }
+
+        if (step.operator === 'exists') {
+            if (!param.endsWith(':missing')) {
+                param = `${param}:missing`;
+            }
+            // If operator is 'exists' (which means we want the field to exist):
+            // value === 'true' (exists) -> missing = false
+            // value === 'false' (doesn't exist) -> missing = true
+            const isMissing = String(val) === 'false' ? 'true' : 'false';
+            queryParams.push(`${param}=${isMissing}`);
+        } else if (step.operator === 'contains') {
+            queryParams.push(`${param}:contains=${val}`);
+        } else if (step.operator === 'greaterThan') {
+            queryParams.push(`${param}=gt${val}`);
+        } else if (step.operator === 'lessThan') {
+            queryParams.push(`${param}=lt${val}`);
+        } else {
+            queryParams.push(`${param}=${val}`);
+        }
+    });
+
+    let url = `[Base_URL]/${mainResource}`;
+    
+    if (queryParams.length > 0) {
+        url += `?${queryParams.join('&')}`;
+    } else {
+        url += `?`;
+    }
+
+    if (hasSubjectLink && mainResource === 'Encounter') {
+        url += `&_include=Encounter:subject`;
+    } else if (hasSubjectLink && mainResource === 'Observation') {
+        url += `&_include=Observation:subject`;
+    } else if (hasSubjectLink && mainResource === 'Procedure') {
+        url += `&_include=Procedure:subject`;
+    }
+
+    url += `&_total=accurate`;
+
+    const elements = new Set<string>(['id']);
+    validSteps.forEach(s => {
+        if (s.path) {
+            const baseParam = s.path.split('.')[0].split(':')[0];
+            elements.add(baseParam);
+        }
+    });
+    if (hasSubjectLink) {
+        elements.add('subject');
+    }
+    url += `&_elements=${Array.from(elements).join(',')}`;
+
+    return `GET ${url}`;
+};
+
 const highlightJson = (jsonStr: string) => {
     return jsonStr.replace(
         /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
@@ -696,25 +770,82 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
                                         當您在設定此指標時，系統底層會將這些運算步驟轉換為針對 FHIR 伺服器的標準查詢。
                                     </p>
                                     <p className="text-slate-500 text-xs">
-                                        💡 <strong>查詢範例</strong>：您可以使用以下 GET 請求。此處以查詢「住院 (IMP)」類別且「已死亡」的個案為例，並利用 <code>_include</code> 聯動獲取病患的完整個資：
+                                        此 API 請求網址已與您上方的<strong>臨床設定條件完全連動與保持一致</strong>：
                                     </p>
                                 </div>
-                                <div className="relative rounded-2xl bg-slate-900 border border-slate-950 p-4 pl-6 pr-16 shadow-inner group">
-                                    {/* Copy GET URL Button */}
-                                    <button
-                                        onClick={() => {
-                                            navigator.clipboard.writeText("GET [Base_URL]/Encounter?class=IMP&_include=Encounter:subject&subject:Patient.death-date:missing=false&_total=accurate&_elements=id,serviceType,participant,subject");
-                                            alert("已複製 GET 請求範例！");
-                                        }}
-                                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition active:scale-95 border border-slate-700/50 shadow-sm"
-                                        title="複製此 GET 請求網址"
-                                    >
-                                        <Copy size={16} />
-                                    </button>
-                                    <code className="block font-mono text-emerald-400 text-xs leading-normal select-all whitespace-pre-wrap break-all pr-2">
-                                        <span className="text-sky-400 font-bold">GET</span> [Base_URL]/Encounter?class=IMP&amp;_include=Encounter:subject&amp;subject:Patient.death-date:missing=false&amp;_total=accurate&amp;_elements=id,serviceType,participant,subject
-                                    </code>
-                                </div>
+                                
+                                {(() => {
+                                    const hasSteps = (denominatorSteps && denominatorSteps.length > 0) || 
+                                                     (numeratorSteps && numeratorSteps.length > 0) || 
+                                                     (exclusionSteps && exclusionSteps.length > 0);
+                                    
+                                    if (!hasSteps) {
+                                        return (
+                                            <div className="space-y-2">
+                                                <label className="text-[11px] font-black text-rose-500 uppercase tracking-widest ml-1 block">
+                                                    💡 參考教學範例 (當前無設定條件，以「住院死亡」指標為例)
+                                                </label>
+                                                <div className="relative rounded-2xl bg-slate-900 border border-slate-950 p-4 pl-6 pr-16 shadow-inner group">
+                                                    <button
+                                                        onClick={() => {
+                                                            navigator.clipboard.writeText("GET [Base_URL]/Encounter?class=IMP&_include=Encounter:subject&subject:Patient.death-date:missing=false&_total=accurate&_elements=id,serviceType,participant,subject");
+                                                            alert("已複製 GET 參考請求範例！");
+                                                        }}
+                                                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition active:scale-95 border border-slate-700/50 shadow-sm"
+                                                        title="複製此 GET 請求網址"
+                                                    >
+                                                        <Copy size={16} />
+                                                    </button>
+                                                    <code className="block font-mono text-emerald-400 text-xs leading-normal select-all whitespace-pre-wrap break-all pr-2">
+                                                        <span className="text-sky-400 font-bold">GET</span> [Base_URL]/Encounter?class=IMP&amp;_include=Encounter:subject&amp;subject:Patient.death-date:missing=false&amp;_total=accurate&amp;_elements=id,serviceType,participant,subject
+                                                    </code>
+                                                </div>
+                                            </div>
+                                        );
+                                    }
+
+                                    const list: { label: string; steps: CalculationStep[] }[] = [];
+                                    if (focusSection === null || focusSection === 'den') {
+                                        list.push({ label: '分母 (Denominator) 動態 API 請求', steps: denominatorSteps });
+                                    }
+                                    if (focusSection === null || focusSection === 'num') {
+                                        list.push({ label: '分子 (Numerator) 動態 API 請求', steps: numeratorSteps });
+                                    }
+                                    if (focusSection === null) {
+                                        list.push({ label: '排除個案 (Exclusions) 動態 API 請求', steps: exclusionSteps });
+                                    }
+
+                                    return (
+                                        <div className="space-y-4">
+                                            {list.map((item, idx) => {
+                                                if (item.steps.length === 0) return null;
+                                                const getReq = generateFhirGetRequest(item.steps);
+                                                return (
+                                                    <div key={idx} className="space-y-2">
+                                                        <label className="text-[11px] font-black text-indigo-600 uppercase tracking-widest ml-1 block">
+                                                            {item.label}
+                                                        </label>
+                                                        <div className="relative rounded-2xl bg-slate-900 border border-slate-950 p-4 pl-6 pr-16 shadow-inner group">
+                                                            <button
+                                                                onClick={() => {
+                                                                    navigator.clipboard.writeText(getReq);
+                                                                    alert(`已複製 ${item.label.substring(0, 2)} 動態 GET 請求！`);
+                                                                }}
+                                                                className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition active:scale-95 border border-slate-700/50 shadow-sm"
+                                                                title="複製此 GET 請求網址"
+                                                            >
+                                                                <Copy size={16} />
+                                                            </button>
+                                                            <code className="block font-mono text-emerald-400 text-xs leading-normal select-all whitespace-pre-wrap break-all pr-2">
+                                                                <span className="text-sky-400 font-bold">GET</span> {getReq.substring(4)}
+                                                            </code>
+                                                        </div>
+                                                    </div>
+                                                );
+                                            })}
+                                        </div>
+                                    );
+                                })()}
                             </div>
 
                             {/* JSON Output Section */}
