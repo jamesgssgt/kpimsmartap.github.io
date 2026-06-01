@@ -357,37 +357,78 @@ export function FactorForm({ initialData, onCancel, onDelete, availableIndicator
                         </div>
                         
                         {/* Body - Scrollable */}
-                        <div className="p-6 md:p-8 overflow-y-auto bg-slate-50/20 flex-1 space-y-6">
-                            <div className="relative rounded-3xl bg-slate-950 border-4 border-slate-900 p-6 shadow-inner group">
-                                {/* Copy Button floating */}
-                                <button
-                                    onClick={handleCopyJson}
-                                    className={`absolute top-4 right-4 flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all shadow-md active:scale-95 z-10 ${
-                                        copied 
-                                            ? 'bg-emerald-500 text-white shadow-emerald-200' 
-                                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700/50'
-                                    }`}
-                                >
-                                    {copied ? (
-                                        <>
-                                            <Check size={14} className="animate-bounce" />
-                                            <span>已複製 JSON！</span>
-                                        </>
-                                    ) : (
-                                        <>
-                                            <Copy size={14} />
-                                            <span>複製設定 JSON</span>
-                                        </>
-                                    )}
-                                </button>
-                                
-                                {/* JSON Display */}
-                                <pre className="text-slate-300 font-mono text-[13px] leading-relaxed overflow-x-auto select-all custom-scrollbar pt-8">
-                                    <code 
-                                        className="block whitespace-pre select-all"
-                                        dangerouslySetInnerHTML={{ __html: highlightJson(JSON.stringify(currentFactorData, null, 2)) }} 
-                                    />
-                                </pre>
+                        <div className="p-6 md:p-8 overflow-y-auto bg-slate-50/20 flex-1 space-y-6 custom-scrollbar">
+                            {/* FHIR API Guide Section */}
+                            <div className="p-6 bg-gradient-to-br from-indigo-50/80 to-emerald-50/40 rounded-3xl border border-indigo-100/80 shadow-sm space-y-4">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-indigo-600 text-white flex items-center justify-center shadow-md">
+                                        <Info size={20} />
+                                    </div>
+                                    <div>
+                                        <h4 className="font-black text-slate-900 text-lg tracking-tight">FHIR 臨床 API 查詢指南</h4>
+                                        <p className="text-xs font-bold text-slate-400">FHIR API Query & Integration Guide</p>
+                                    </div>
+                                </div>
+                                <div className="text-slate-600 text-sm font-bold leading-relaxed space-y-2">
+                                    <p>
+                                        當您在設定此要素時，系統底層會將這些運算步驟轉換為針對 FHIR 伺服器的標準查詢。
+                                    </p>
+                                    <p className="text-slate-500 text-xs">
+                                        💡 <strong>查詢範例</strong>：您可以使用以下 GET 請求。此處以查詢「住院 (IMP)」類別且「已死亡」的個案為例，並利用 <code>_include</code> 聯動獲取病患的完整個資：
+                                    </p>
+                                </div>
+                                <div className="relative rounded-2xl bg-slate-900 border border-slate-950 p-4 pl-6 pr-16 shadow-inner group">
+                                    {/* Copy GET URL Button */}
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText("GET [Base_URL]/Encounter?class=IMP&_include=Encounter:subject&subject:Patient.death-date:missing=false&_total=accurate&_elements=id,serviceType,participant,subject");
+                                            alert("已複製 GET 請求範例！");
+                                        }}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 p-2.5 rounded-lg bg-slate-800 text-slate-400 hover:text-white hover:bg-slate-700 transition active:scale-95 border border-slate-700/50 shadow-sm"
+                                        title="複製此 GET 請求網址"
+                                    >
+                                        <Copy size={16} />
+                                    </button>
+                                    <code className="block font-mono text-emerald-400 text-xs leading-normal select-all whitespace-pre-wrap break-all pr-2">
+                                        <span className="text-sky-400 font-bold">GET</span> [Base_URL]/Encounter?class=IMP&amp;_include=Encounter:subject&amp;subject:Patient.death-date:missing=false&amp;_total=accurate&amp;_elements=id,serviceType,participant,subject
+                                    </code>
+                                </div>
+                            </div>
+
+                            {/* JSON Output Section */}
+                            <div className="space-y-3">
+                                <label className="text-xs font-black text-slate-500 uppercase tracking-widest ml-1 block">要素定義設定 JSON (Factor Payload)</label>
+                                <div className="relative rounded-3xl bg-slate-950 border-4 border-slate-900 p-6 shadow-inner group">
+                                    {/* Copy Button floating */}
+                                    <button
+                                        onClick={handleCopyJson}
+                                        className={`absolute top-4 right-4 flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all shadow-md active:scale-95 z-10 ${
+                                            copied 
+                                                ? 'bg-emerald-500 text-white shadow-emerald-200' 
+                                                : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700/50'
+                                        }`}
+                                    >
+                                        {copied ? (
+                                            <>
+                                                <Check size={14} className="animate-bounce" />
+                                                <span>已複製 JSON！</span>
+                                            </>
+                                        ) : (
+                                            <>
+                                                <Copy size={14} />
+                                                <span>複製設定 JSON</span>
+                                            </>
+                                        )}
+                                    </button>
+                                    
+                                    {/* JSON Display */}
+                                    <pre className="text-slate-300 font-mono text-[13px] leading-relaxed overflow-x-auto select-all custom-scrollbar pt-8">
+                                        <code 
+                                            className="block whitespace-pre select-all"
+                                            dangerouslySetInnerHTML={{ __html: highlightJson(JSON.stringify(currentFactorData, null, 2)) }} 
+                                        />
+                                    </pre>
+                                </div>
                             </div>
                         </div>
                         
