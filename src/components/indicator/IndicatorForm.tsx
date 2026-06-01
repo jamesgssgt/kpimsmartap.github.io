@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { QualityIndicator, CalculationStep, FhirResource, CalculationAction, ValueType, Factor } from '@/components/indicator/types';
 import {
     Plus, Trash2, Database, Sparkles, Activity, MessageSquare, Zap,
-    Loader2, Link2, Settings2, X, Info, Code, HelpCircle,
+    Loader2, Link2, Settings2, X, Info, Code, HelpCircle, Copy, Check,
     Layers, ChevronDown, Brain, Calculator, Hash, Tag, Replace, ArrowRight, Minus, Divide, Percent, Search,
     AlertTriangle, Wand2, Sparkle, Users, RefreshCw
 } from 'lucide-react';
@@ -24,6 +24,27 @@ interface Props {
     availableIndicators?: QualityIndicator[];
     focusSection?: 'num' | 'den' | null;
 }
+
+const highlightJson = (jsonStr: string) => {
+    return jsonStr.replace(
+        /("(\\u[a-zA-Z0-9]{4}|\\[^u]|[^\\"])*"(\s*:)?|\b(true|false|null)\b|-?\d+(?:\.\d*)?(?:[eE][+-]?\d+)?)/g,
+        (match) => {
+            let cls = 'text-amber-400'; // numbers
+            if (/^"/.test(match)) {
+                if (/:$/.test(match)) {
+                    cls = 'text-sky-300 font-bold'; // keys
+                } else {
+                    cls = 'text-emerald-400'; // strings
+                }
+            } else if (/true|false/.test(match)) {
+                cls = 'text-purple-400 font-bold'; // booleans
+            } else if (/null/.test(match)) {
+                cls = 'text-rose-400 font-bold'; // null
+            }
+            return `<span class="${cls}">${match}</span>`;
+        }
+    );
+};
 
 const Section: React.FC<{
     title: string;
@@ -182,12 +203,39 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
     const [saveAttempted, setSaveAttempted] = useState(false);
     const { enableAi } = useSettings();
     const [availableFactors, setAvailableFactors] = useState<Factor[]>([]);
+    
+    const [showJsonModal, setShowJsonModal] = useState(false);
+    const [copied, setCopied] = useState(false);
 
     useEffect(() => {
         getFactors().then(setAvailableFactors).catch(console.error);
     }, []);
 
     const nameInputRef = useRef<HTMLInputElement>(null);
+
+    const currentIndicatorData: QualityIndicator = {
+        id: initialData?.id || 'temp-id-for-preview',
+        name,
+        description,
+        numeratorName,
+        denominatorName,
+        numeratorSteps,
+        denominatorSteps,
+        exclusionSteps,
+        numeratorCalculationMethod: numeratorMethod,
+        denominatorCalculationMethod: denominatorMethod,
+        numeratorDistinctBasis: numeratorMethod === 'distcount' ? numeratorDistinctBasis : undefined,
+        denominatorDistinctBasis: denominatorMethod === 'distcount' ? denominatorDistinctBasis : undefined,
+        frequency: frequency,
+        targetValue: targetValue ? parseFloat(targetValue) : undefined,
+        targetOperator: targetOperator
+    };
+
+    const handleCopyJson = () => {
+        navigator.clipboard.writeText(JSON.stringify(currentIndicatorData, null, 2));
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+    };
 
     useEffect(() => {
         if (initialData) {
@@ -579,12 +627,111 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
                             </button>
                         )}
 
+                    <button
+                        type="button"
+                        onClick={() => setShowJsonModal(true)}
+                        className="flex-1 md:flex-none flex items-center justify-center gap-2 px-8 py-6 text-emerald-600 font-black text-xl hover:bg-emerald-50 rounded-[2rem] transition-all border-2 border-emerald-200"
+                        title="查看設定的 API JSON"
+                    >
+                        <Code size={20} />
+                        <span>查看 API JSON</span>
+                    </button>
                     <button type="button" onClick={onCancel} className="flex-1 md:flex-none px-10 py-6 text-slate-400 hover:text-slate-800 font-black text-xl transition-colors">取消</button>
                     <button type="button" onClick={handleSave} className="flex-1 md:flex-none px-12 md:px-20 py-8 bg-slate-900 text-white rounded-[2rem] font-black hover:bg-indigo-600 shadow-2xl transition-all text-xl md:text-2xl active:scale-95">
                         {focusSection ? '儲存要素設定' : '儲存指標設定'}
                     </button>
                 </div>
             </div>
+
+            {/* API JSON Preview Modal */}
+            {showJsonModal && (
+                <div className="fixed inset-0 z-[100] flex items-center justify-center p-4 md:p-6 animate-in fade-in duration-300">
+                    {/* Backdrop */}
+                    <div 
+                        className="absolute inset-0 bg-slate-900/60 backdrop-blur-md cursor-pointer" 
+                        onClick={() => setShowJsonModal(false)}
+                    />
+                    
+                    {/* Modal Content */}
+                    <div className="relative w-full max-w-4xl bg-white rounded-[2.5rem] border-2 border-slate-100 shadow-2xl overflow-hidden flex flex-col max-h-[85vh] animate-in zoom-in-95 duration-300">
+                        {/* Gradient header line */}
+                        <div className="h-2 bg-gradient-to-r from-emerald-500 via-indigo-500 to-rose-500 w-full" />
+                        
+                        {/* Header */}
+                        <div className="p-6 md:p-8 flex items-center justify-between border-b border-slate-100 bg-slate-50/50">
+                            <div className="space-y-2">
+                                <h3 className="text-2xl font-black text-slate-900 tracking-tight flex items-center gap-3">
+                                    <span className="w-10 h-10 rounded-xl bg-emerald-100 text-emerald-600 flex items-center justify-center shadow-inner">
+                                        <Code size={22} />
+                                    </span>
+                                    API JSON 設定確認
+                                </h3>
+                                <p className="text-sm font-bold text-slate-400">
+                                    此為同步至 API 與資料庫的完整指標定義結構，可用於確認 FHIR 欄位路徑與運算邏輯是否正確。
+                                </p>
+                            </div>
+                            <button 
+                                onClick={() => setShowJsonModal(false)} 
+                                className="w-12 h-12 rounded-full border border-slate-200 bg-white flex items-center justify-center text-slate-400 hover:text-slate-800 hover:border-slate-300 shadow-sm transition-all hover:rotate-90 active:scale-95"
+                            >
+                                <X size={20} />
+                            </button>
+                        </div>
+                        
+                        {/* Body - Scrollable */}
+                        <div className="p-6 md:p-8 overflow-y-auto bg-slate-50/20 flex-1 space-y-6">
+                            <div className="relative rounded-3xl bg-slate-950 border-4 border-slate-900 p-6 shadow-inner group">
+                                {/* Copy Button floating */}
+                                <button
+                                    onClick={handleCopyJson}
+                                    className={`absolute top-4 right-4 flex items-center gap-2 px-4 py-2.5 rounded-xl text-xs font-black transition-all shadow-md active:scale-95 z-10 ${
+                                        copied 
+                                            ? 'bg-emerald-500 text-white shadow-emerald-200' 
+                                            : 'bg-slate-800 text-slate-300 hover:bg-slate-700 hover:text-white border border-slate-700/50'
+                                    }`}
+                                >
+                                    {copied ? (
+                                        <>
+                                            <Check size={14} className="animate-bounce" />
+                                            <span>已複製 JSON！</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Copy size={14} />
+                                            <span>複製設定 JSON</span>
+                                        </>
+                                    )}
+                                </button>
+                                
+                                {/* JSON Display */}
+                                <pre className="text-slate-300 font-mono text-[13px] leading-relaxed overflow-x-auto select-all custom-scrollbar pt-8">
+                                    <code 
+                                        className="block whitespace-pre select-all"
+                                        dangerouslySetInnerHTML={{ __html: highlightJson(JSON.stringify(currentIndicatorData, null, 2)) }} 
+                                    />
+                                </pre>
+                            </div>
+                        </div>
+                        
+                        {/* Footer */}
+                        <div className="p-6 md:p-8 border-t border-slate-100 flex justify-end gap-4 bg-slate-50/50">
+                            <button 
+                                onClick={() => setShowJsonModal(false)}
+                                className="px-8 py-4 border border-slate-200 bg-white text-slate-500 hover:text-slate-800 hover:border-slate-300 rounded-2xl font-black transition-colors text-lg"
+                            >
+                                關閉視窗
+                            </button>
+                            <button 
+                                onClick={handleCopyJson}
+                                className="px-8 py-4 bg-slate-900 text-white hover:bg-indigo-600 rounded-2xl font-black transition-all flex items-center gap-2 active:scale-95 shadow-lg text-lg"
+                            >
+                                <Copy size={18} />
+                                複製 JSON
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };
