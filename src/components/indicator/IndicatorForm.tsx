@@ -769,9 +769,19 @@ export const IndicatorForm: React.FC<Props> = ({ onSave, onCancel, initialData, 
                                     <p>
                                         當您在設定此指標時，系統底層會將這些運算步驟轉換為針對 FHIR 伺服器的標準查詢。
                                     </p>
-                                    <p className="text-slate-500 text-xs">
-                                        此 API 請求網址已與您上方的<strong>臨床設定條件完全連動與保持一致</strong>：
-                                    </p>
+                                    <div className="text-slate-500 text-xs bg-slate-50 p-4 rounded-xl border border-slate-100/80 space-y-1 shadow-inner">
+                                        <div>
+                                            💡 <strong>指標說明</strong>：此處以查詢指標<strong>「{name || "未命名指標"}」</strong>為例。
+                                        </div>
+                                        {description && (
+                                            <div className="text-slate-400">
+                                                🎯 <strong>監測目標</strong>：{description}
+                                            </div>
+                                        )}
+                                        <div className="text-indigo-500 font-medium">
+                                            ⚙️ <strong>運算條件</strong>：已將您設定的臨床步驟轉換為下方對應的標準 FHIR 查詢網址：
+                                        </div>
+                                    </div>
                                 </div>
                                 
                                 {(() => {
